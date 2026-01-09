@@ -1,0 +1,21 @@
+# Build artifacts
+*.obj
+*.dll
+*.exp
+*.lib
+*.pdb
+*.log
+bin/
+out/
+build/
+
+# Visual Studio
+.vs/
+*.sln
+*.vcxproj
+*.user
+*.filters
+*.aps
+
+# Project specific
+run_test.bat

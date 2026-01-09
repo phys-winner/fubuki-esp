@@ -1,0 +1,21 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Define binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.dll binary
+*.obj binary
+*.lib binary
+*.exe binary
+
+# Ensure batch files use CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Ensure source files use LF for consistency (optional, but good for cross-platform)
+# For Windows only projects, CRLF might be preferred, but git usually handles it.
+# We'll stick to auto for most things.
