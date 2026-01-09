@@ -17,8 +17,11 @@
 - **Platform**: Windows
 - **Renderer**: DirectX 11
 
+## Download
+You can download the latest compiled DLL from the [Releases](https://github.com/phys-winner/fubuki-esp/releases) page.
+
 ## Usage
-To use this project, you need to inject the compiled `fubuki_tld.dll` (found in the `build/` directory after building) into the game process (`tld.exe`).
+To use this project, you need to inject the `fubuki_tld.dll` into the game process (`tld.exe`).
 
 ### Recommended Injectors:
 1.  **AeroInject**: A simple and clean DLL injector.
@@ -39,7 +42,7 @@ To use this project, you need to inject the compiled `fubuki_tld.dll` (found in 
 To build the project from source:
 1. Clone the repository with submodules:
    ```bash
-   git clone --recursive https://github.com/yourusername/Fubuki-ESP.git
+    git clone --recursive https://github.com/phys-winner/fubuki-esp.git
    ```
    *If you already cloned it without `--recursive`, run: `git submodule update --init --recursive`*
 2. Open a **Developer Command Prompt for VS**.
