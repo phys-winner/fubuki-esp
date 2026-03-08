@@ -48,8 +48,7 @@ bool g_ShowHarvestableESP = false;
 
 float g_EspDistance = 250.0f;
 
-static void *(*Camera_get_currentInternal)();
-static void *(*GameManager_GetVpFPSCamera)();
+static void *(*GameManager_GetMainCamera)();
 static Unity::Vector3 (*Camera_WorldToScreenPoint)(void *camera,
                                                    Unity::Vector3 position,
                                                    int eye);
@@ -230,7 +229,7 @@ void DrawESP() {
   if (!g_DrawEsp)
     return;
 
-  auto camera = Camera_get_currentInternal();
+  auto camera = GameManager_GetMainCamera();
   ImDrawList *draw = ImGui::GetForegroundDrawList();
   Unity::Vector3 camera_position = GetCameraPosition(camera);
 
@@ -565,29 +564,29 @@ DWORD WINAPI MainThread(LPVOID lpReserved) {
   if (MH_OK != MH_EnableHook(MH_ALL_HOOKS))
     return 1;
 
-  auto base_addr = (uintptr_t)IL2CPP::Globals.m_GameAssembly;
+  GameManager_GetMainCamera = reinterpret_cast<void *(*)()>(
+      IL2CPP::Class::Utils::GetMethodPointer("GameManager", "GetMainCamera", 0));
 
-  Camera_get_currentInternal =
-      (void *(*)(void))((uintptr_t)(base_addr + 0xC31B50)); // GetMainCamera()
+  Camera_WorldToScreenPoint = reinterpret_cast<Unity::Vector3 (*)(void *, Unity::Vector3, int)>(
+      IL2CPP::Class::Utils::GetMethodPointer("UnityEngine.Camera", "WorldToScreenPoint", 2));
 
-  GameManager_GetVpFPSCamera =
-      (void *(*)(void))((uintptr_t)(base_addr + 0xC31D30));
+  Component_get_transform = reinterpret_cast<void *(*)(void *)>(
+      IL2CPP::Class::Utils::GetMethodPointer("UnityEngine.Component", "get_transform", 0));
 
-  Camera_WorldToScreenPoint = (Unity::Vector3 (*)(void *, Unity::Vector3, int))(
-      (uintptr_t)(base_addr + 0x394B020));
-  Component_get_transform =
-      (void *(*)(void *))((uintptr_t)(base_addr + 0x39E5780));
-  Component_get_gameObject =
-      (void *(*)(void *))((uintptr_t)(base_addr + 0x39E5840));
-  GameObject_get_transform =
-      (void *(*)(void *))((uintptr_t)(base_addr + 0x39EB430));
-  GameObject_get_activeInHierarchy =
-      (bool (*)(void *))((uintptr_t)(base_addr + 0x39EB8E0));
-  Transform_get_position =
-      (Unity::Vector3 (*)(void *))((uintptr_t)(base_addr + 0x3A06800));
+  Component_get_gameObject = reinterpret_cast<void *(*)(void *)>(
+      IL2CPP::Class::Utils::GetMethodPointer("UnityEngine.Component", "get_gameObject", 0));
 
-  GearItem_get_DisplayNameWithCondition =
-      (Unity::System_String * (*)(void *))((uintptr_t)(base_addr + 0x8269F0));
+  GameObject_get_transform = reinterpret_cast<void *(*)(void *)>(
+      IL2CPP::Class::Utils::GetMethodPointer("UnityEngine.GameObject", "get_transform", 0));
+
+  GameObject_get_activeInHierarchy = reinterpret_cast<bool (*)(void *)>(
+      IL2CPP::Class::Utils::GetMethodPointer("UnityEngine.GameObject", "get_activeInHierarchy", 0));
+
+  Transform_get_position = reinterpret_cast<Unity::Vector3 (*)(void *)>(
+      IL2CPP::Class::Utils::GetMethodPointer("UnityEngine.Transform", "get_position", 0));
+
+  GearItem_get_DisplayNameWithCondition = reinterpret_cast<Unity::System_String * (*)(void *)>(
+      IL2CPP::Class::Utils::GetMethodPointer("GearItem", "get_DisplayNameWithCondition", 0));
 
   pDummySwapChain->Release();
   pDummyDevice->Release();
