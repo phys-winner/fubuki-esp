@@ -9,7 +9,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
+#include <map>
 #include <mutex>
+#include <string>
 #include <vector>
 
 // Tyedefs for hooked functions
@@ -48,6 +51,45 @@ bool g_ShowHarvestableESP = false;
 
 float g_EspDistance = 250.0f;
 
+bool g_ShowVisibilityMenu = false;
+std::map<std::string, bool> g_ItemHidden;
+
+void SaveConfig() {
+    char path[MAX_PATH];
+    GetModuleFileNameA(NULL, path, MAX_PATH);
+    std::string exePath(path);
+    std::string iniPath = exePath.substr(0, exePath.find_last_of("\\/")) + "\\fubuki_esp_visibility.ini";
+    std::ofstream out(iniPath);
+    out << "[HiddenItems]\n";
+    for(const auto& kv : g_ItemHidden) {
+        if (kv.second) {
+            out << kv.first << "=1\n";
+        }
+    }
+}
+
+void LoadConfig() {
+    char path[MAX_PATH];
+    GetModuleFileNameA(NULL, path, MAX_PATH);
+    std::string exePath(path);
+    std::string iniPath = exePath.substr(0, exePath.find_last_of("\\/")) + "\\fubuki_esp_visibility.ini";
+    std::ifstream in(iniPath);
+    std::string line;
+    bool inSection = false;
+    while(std::getline(in, line)) {
+        if (line == "[HiddenItems]") { inSection = true; continue; }
+        if (line.empty() || line[0] == '[') { if(inSection && line[0] == '[') inSection = false; continue; }
+        if (inSection) {
+            size_t pos = line.find('=');
+            if (pos != std::string::npos) {
+                std::string k = line.substr(0, pos);
+                std::string v = line.substr(pos + 1);
+                if (v == "1") g_ItemHidden[k] = true;
+            }
+        }
+    }
+}
+
 static void *(*GameManager_GetMainCamera)();
 static Unity::Vector3 (*Camera_WorldToScreenPoint)(void *camera,
                                                    Unity::Vector3 position,
@@ -59,8 +101,14 @@ static bool (*GameObject_get_activeInHierarchy)(void *_this);
 static Unity::Vector3 (*Transform_get_position)(void *_this);
 static Unity::System_String *(*GearItem_get_DisplayNameWithCondition)(
     void *_this);
-std::vector<void *> g_BaseAiList;
-std::vector<void *> g_GearItemList;
+
+struct CachedESPItem {
+  void* ptr;
+  std::string name;
+};
+
+std::vector<CachedESPItem> g_BaseAiList;
+std::vector<CachedESPItem> g_GearItemList;
 std::vector<void *> g_HarvestableList;
 std::mutex g_BaseAiMutex;
 std::mutex g_GearItemMutex;
@@ -81,6 +129,10 @@ float Vector3_Distance(const Unity::Vector3 &v1, const Unity::Vector3 &v2) {
 // Forward declarations
 extern LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg,
                                               WPARAM wParam, LPARAM lParam);
+std::string GetDisplayName(void *ai);
+std::string GetGearItemDisplayName(void *gearItem);
+void SaveConfig();
+void LoadConfig();
 
 LRESULT CALLBACK WndProc(const HWND hWnd, UINT uMsg, WPARAM wParam,
                          LPARAM lParam) {
@@ -96,8 +148,9 @@ tBaseAiManagerAdd oBaseAiManagerAdd;
 void hkBaseAiManagerAdd(void *__this) {
   oBaseAiManagerAdd(__this);
 
+  std::string name = GetDisplayName(__this);
   std::lock_guard<std::mutex> lock(g_BaseAiMutex);
-  g_BaseAiList.push_back(__this);
+  g_BaseAiList.push_back({__this, name});
 }
 
 using tBaseAiManagerRemove = void (*)(void *);
@@ -106,7 +159,8 @@ tBaseAiManagerRemove oBaseAiManagerRemove;
 void hkBaseAiManagerRemove(void *__this) {
   {
     std::lock_guard<std::mutex> lock(g_BaseAiMutex);
-    auto it = std::find(g_BaseAiList.begin(), g_BaseAiList.end(), __this);
+    auto it = std::find_if(g_BaseAiList.begin(), g_BaseAiList.end(),
+                           [__this](const CachedESPItem& item) { return item.ptr == __this; });
 
     if (it != g_BaseAiList.end()) {
       std::swap(*it,
@@ -123,8 +177,9 @@ tGearManagerAdd oGearManagerAdd;
 void hkGearManagerAdd(void *__this) {
   oGearManagerAdd(__this);
 
+  std::string name = GetGearItemDisplayName(__this);
   std::lock_guard<std::mutex> lock(g_GearItemMutex);
-  g_GearItemList.push_back(__this);
+  g_GearItemList.push_back({__this, name});
 }
 
 using tGearManagerRemove = void (*)(void *);
@@ -133,7 +188,8 @@ tGearManagerRemove oGearManagerRemove;
 void hkGearManagerRemove(void *__this) {
   {
     std::lock_guard<std::mutex> lock(g_GearItemMutex);
-    auto it = std::find(g_GearItemList.begin(), g_GearItemList.end(), __this);
+    auto it = std::find_if(g_GearItemList.begin(), g_GearItemList.end(),
+                           [__this](const CachedESPItem& item) { return item.ptr == __this; });
 
     if (it != g_GearItemList.end()) {
       std::swap(*it,
@@ -236,8 +292,10 @@ void DrawESP() {
   if (g_ShowBaseAiESP) {
     std::lock_guard<std::mutex> lock(g_BaseAiMutex);
     for (auto &ai : g_BaseAiList) {
+      if (g_ItemHidden[ai.name]) continue;
+
       Unity::Vector3 worldPos =
-          GetWorldPosition(reinterpret_cast<Unity::CComponent *>(ai));
+          GetWorldPosition(reinterpret_cast<Unity::CComponent *>(ai.ptr));
       Unity::Vector3 screenPos{};
 
       screenPos = Camera_WorldToScreenPoint(
@@ -252,8 +310,8 @@ void DrawESP() {
 
       std::string text = "* ";
       if (g_ShowBaseAiHP) {
-        int hp = (int)GetCurrentHP(ai);
-        int maxHp = (int)GetMaxHP(ai);
+        int hp = (int)GetCurrentHP(ai.ptr);
+        int maxHp = (int)GetMaxHP(ai.ptr);
 
         char hpBuf[32];
         char maxHpBuf[32];
@@ -274,7 +332,7 @@ void DrawESP() {
       text += distBuf;
       text += "m.] ";
       if (g_ShowBaseAiName)
-        text += GetDisplayName(ai);
+        text += ai.name;
 
       ImGuiIO &io = ImGui::GetIO();
       float x = screenPos.x;
@@ -288,8 +346,10 @@ void DrawESP() {
   if (g_ShowGearItemESP) {
     std::lock_guard<std::mutex> lock(g_GearItemMutex);
     for (auto &item : g_GearItemList) {
+      if (g_ItemHidden[item.name]) continue;
+
       Unity::Vector3 worldPos =
-          GetGearItemWorldPosition(reinterpret_cast<Unity::CComponent *>(item));
+          GetGearItemWorldPosition(reinterpret_cast<Unity::CComponent *>(item.ptr));
       if (worldPos.x == -9999.0f && worldPos.y == -9999.0f &&
           worldPos.z == -9999.0f) {
         continue;
@@ -312,7 +372,7 @@ void DrawESP() {
       text += " [";
       text += distBuf;
       text += "m.] ";
-      text += GetGearItemDisplayName(item);
+      text += item.name;
 
       ImGuiIO &io = ImGui::GetIO();
       float x = screenPos.x;
@@ -425,9 +485,84 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
       ImGui::SliderFloat("ESP Distance", &g_EspDistance, 10.0f, 1000.0f);
 
       ImGui::Separator();
+      if (ImGui::Button("Visibility Menu", ImVec2(120, 0))) {
+        g_ShowVisibilityMenu = !g_ShowVisibilityMenu;
+      }
+      ImGui::SameLine();
       if (ImGui::Button("Unload DLL", ImVec2(120, 0))) {
         // Signal unload
       }
+      ImGui::End();
+    }
+
+    if (g_ShowVisibilityMenu) {
+      ImGui::Begin("ESP Item Visibility", &g_ShowVisibilityMenu, ImGuiWindowFlags_AlwaysAutoResize);
+      
+      static int sortType = 0; // 0 = name, 1 = count
+      static bool sortAsc = true;
+      
+      ImGui::RadioButton("Sort by Name", &sortType, 0); ImGui::SameLine();
+      ImGui::RadioButton("Sort by Quantity", &sortType, 1);
+      ImGui::Checkbox("Ascending", &sortAsc);
+      ImGui::Separator();
+      
+      struct ItemCount { std::string name; int count; bool visible; };
+      std::map<std::string, int> counts;
+      {
+          std::lock_guard<std::mutex> lock1(g_GearItemMutex);
+          for(auto& item : g_GearItemList) counts[item.name]++;
+      }
+      {
+          std::lock_guard<std::mutex> lock2(g_BaseAiMutex);
+          for(auto& ai : g_BaseAiList) counts[ai.name]++;
+      }
+      
+      std::vector<ItemCount> items;
+      for(auto& kv : counts) {
+          items.push_back({kv.first, kv.second, !g_ItemHidden[kv.first]});
+      }
+      
+      std::sort(items.begin(), items.end(), [](const ItemCount& a, const ItemCount& b) {
+          if (sortType == 0) {
+              return sortAsc ? a.name < b.name : a.name > b.name;
+          } else {
+              if (a.count == b.count) return sortAsc ? a.name < b.name : a.name > b.name;
+              return sortAsc ? a.count < b.count : a.count > b.count;
+          }
+      });
+      
+      int totalItems = (int)items.size();
+      int totalPages = (totalItems + 14) / 15;
+      if (totalPages == 0) totalPages = 1;
+
+      static int currentPage = 0;
+      if (currentPage >= totalPages) currentPage = totalPages - 1;
+      if (currentPage < 0) currentPage = 0;
+
+      int startIdx = currentPage * 15;
+      int endIdx = startIdx + 15 < totalItems ? startIdx + 15 : totalItems;
+
+      for(int i = startIdx; i < endIdx; ++i) {
+          auto& item = items[i];
+          bool checked = item.visible;
+          std::string label = "[" + std::to_string(item.count) + "] " + item.name + "##" + item.name;
+          if (ImGui::Checkbox(label.c_str(), &checked)) {
+              g_ItemHidden[item.name] = !checked;
+              SaveConfig();
+          }
+      }
+
+      ImGui::Separator();
+      if (ImGui::Button("< Prev") && currentPage > 0) {
+          currentPage--;
+      }
+      ImGui::SameLine();
+      ImGui::Text("Page %d of %d", currentPage + 1, totalPages);
+      ImGui::SameLine();
+      if (ImGui::Button("Next >") && currentPage < totalPages - 1) {
+          currentPage++;
+      }
+      
       ImGui::End();
     }
 
@@ -523,6 +658,8 @@ DWORD WINAPI MainThread(LPVOID lpReserved) {
   if (!InitBaseAiOffsets())
     return 1;
 
+  LoadConfig();
+
   auto gearManagerAddPtr =
       IL2CPP::Class::Utils::GetMethodPointer("GearManager", "Add", 1);
   if (MH_OK != MH_CreateHook(gearManagerAddPtr, &hkGearManagerAdd,
@@ -561,9 +698,6 @@ DWORD WINAPI MainThread(LPVOID lpReserved) {
                     reinterpret_cast<void **>(&oHarvestableManagerRemove)))
     return 1;
 
-  if (MH_OK != MH_EnableHook(MH_ALL_HOOKS))
-    return 1;
-
   GameManager_GetMainCamera = reinterpret_cast<void *(*)()>(
       IL2CPP::Class::Utils::GetMethodPointer("GameManager", "GetMainCamera", 0));
 
@@ -587,6 +721,9 @@ DWORD WINAPI MainThread(LPVOID lpReserved) {
 
   GearItem_get_DisplayNameWithCondition = reinterpret_cast<Unity::System_String * (*)(void *)>(
       IL2CPP::Class::Utils::GetMethodPointer("GearItem", "get_DisplayNameWithCondition", 0));
+
+  if (MH_OK != MH_EnableHook(MH_ALL_HOOKS))
+    return 1;
 
   pDummySwapChain->Release();
   pDummyDevice->Release();
