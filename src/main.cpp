@@ -8,6 +8,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <fstream>
@@ -40,6 +41,7 @@ ID3D11RenderTargetView *mainRenderTargetView = NULL;
 HWND window = NULL;
 bool init = false;
 bool showMenu = true;
+std::atomic<bool> g_Running{true};
 
 // Hack settings
 bool g_DrawEsp = false;
@@ -451,6 +453,7 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
       ImGui::Separator();
 
       ImGui::Checkbox("BaseAi ESP", &g_ShowBaseAiESP);
+      ImGui::SetItemTooltip("Show locations of animals and other AI entities.");
       ImGui::Checkbox("Show HP", &g_ShowBaseAiHP);
       ImGui::Checkbox("Show Name", &g_ShowBaseAiName);
       {
@@ -459,12 +462,14 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
       }
 
       ImGui::Checkbox("GearItem ESP", &g_ShowGearItemESP);
+      ImGui::SetItemTooltip("Show locations of tools, food, and other resources.");
       {
         std::lock_guard<std::mutex> lock(g_GearItemMutex);
         ImGui::Text("Found %zu GearItem", g_GearItemList.size());
       }
 
       ImGui::Checkbox("Harvestable ESP", &g_ShowHarvestableESP);
+      ImGui::SetItemTooltip("Highlight plants and harvestable objects in the environment.");
       {
         std::lock_guard<std::mutex> lock(g_HarvestableMutex);
         ImGui::Text("Found %zu Harvestable", g_HarvestableList.size());
@@ -478,7 +483,24 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
       }
       ImGui::SameLine();
       if (ImGui::Button("Unload DLL", ImVec2(120, 0))) {
-        // Signal unload
+        ImGui::OpenPopup("Confirm Unload");
+      }
+      ImGui::SetItemTooltip("Safely detach the cheat from the game.");
+
+      if (ImGui::BeginPopupModal("Confirm Unload", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Are you sure you want to unload the DLL?\nThis will safely detach the cheat from the game.");
+        ImGui::Separator();
+
+        if (ImGui::Button("Yes, Unload", ImVec2(120, 0))) {
+          g_Running = false;
+          ImGui::CloseCurrentPopup();
+        }
+        ImGui::SetItemDefaultFocus();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+          ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
       }
       ImGui::End();
     }
@@ -570,8 +592,6 @@ bool InitBaseAiOffsets() {
 }
 
 DWORD WINAPI MainThread(LPVOID lpReserved) {
-  bool g_Running = true;
-
   // Create a dummy swapchain to get the vtable offsets
   D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_0;
   DXGI_SWAP_CHAIN_DESC scd;
