@@ -509,7 +509,9 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
   if (GetAsyncKeyState(VK_INSERT) & 1) {
     showMenu = !showMenu;
   }
-  g_DrawEsp = g_ShowBaseAiESP || g_ShowGearItemESP || g_ShowHarvestableESP;
+  g_DrawEsp = (g_ShowBaseAiESP && !g_BaseAiList.empty()) 
+    || (g_ShowGearItemESP && !g_GearItemList.empty()) 
+    || (g_ShowHarvestableESP && !g
 
   if (g_DrawEsp || showMenu) {
     ImGui_ImplDX11_NewFrame();
