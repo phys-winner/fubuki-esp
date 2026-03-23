@@ -8,11 +8,11 @@ set "VS_DEV_CMD="
 if defined VCINSTALLDIR (
     echo [INFO] Already in a Developer Command Prompt.
 ) else (
-    :: Common paths for VS 2022
-    set "PATHS[0]=C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat"
-    set "PATHS[1]=C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"
-    set "PATHS[2]=C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat"
-    set "PATHS[3]=C:\Program Files\Microsoft Visual Studio\2022\Preview\Common7\Tools\VsDevCmd.bat"
+    :: Common paths for VS 2026
+    set "PATHS[0]=C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\VsDevCmd.bat"
+    set "PATHS[1]=C:\Program Files\Microsoft Visual Studio\18\Professional\Common7\Tools\VsDevCmd.bat"
+    set "PATHS[2]=C:\Program Files\Microsoft Visual Studio\18\Enterprise\Common7\Tools\VsDevCmd.bat"
+    set "PATHS[3]=C:\Program Files\Microsoft Visual Studio\18\Preview\Common7\Tools\VsDevCmd.bat"
 
     for /L %%i in (0,1,3) do (
         if not defined VS_DEV_CMD (
