@@ -27,11 +27,14 @@ typedef void(WINAPI *DrawIndexed)(ID3D11DeviceContext *pContext,
                                   UINT IndexCount, UINT StartIndexLocation,
                                   INT BaseVertexLocation);
 typedef LRESULT(CALLBACK *WNDPROC)(HWND, UINT, WPARAM, LPARAM);
+typedef void *(*tUnloadSceneNameIndexInternal)(Unity::System_String *, int, bool,
+                                               int, bool *);
 
 // Original function pointers
 static Present oPresent = NULL;
 static ResizeBuffers oResizeBuffers = NULL;
 WNDPROC oWndProc = NULL;
+tUnloadSceneNameIndexInternal oUnloadSceneNameIndexInternal = NULL;
 
 // Global variables
 ID3D11Device *pDevice = NULL;
@@ -159,6 +162,7 @@ tBaseAiManagerAdd oBaseAiManagerAdd;
 
 void hkBaseAiManagerAdd(void *__this) {
   oBaseAiManagerAdd(__this);
+  if (__this == nullptr) return;
 
   std::string name = GetDisplayName(__this);
   void* transform = Component_get_transform(__this);
@@ -190,6 +194,7 @@ tGearManagerAdd oGearManagerAdd;
 
 void hkGearManagerAdd(void *__this) {
   oGearManagerAdd(__this);
+  if (__this == nullptr) return;
 
   std::string name = GetGearItemDisplayName(__this);
   void* transform = Component_get_transform(__this);
@@ -221,6 +226,7 @@ tHarvestableManagerAdd oHarvestableManagerAdd;
 
 void hkHarvestableManagerAdd(void *__this) {
   oHarvestableManagerAdd(__this);
+  if (__this == nullptr) return;
 
   void* transform = Component_get_transform(__this);
 
@@ -230,6 +236,26 @@ void hkHarvestableManagerAdd(void *__this) {
 
 using tHarvestableManagerRemove = void (*)(void *);
 tHarvestableManagerRemove oHarvestableManagerRemove;
+
+void *hkUnloadSceneNameIndexInternal(Unity::System_String *sceneName,
+                                     int sceneBuildIndex, bool immediately,
+                                     int options, bool *outSuccess) {
+  {
+    std::lock_guard<std::mutex> lock(g_BaseAiMutex);
+    g_BaseAiList.clear();
+  }
+  {
+    std::lock_guard<std::mutex> lock(g_GearItemMutex);
+    g_GearItemList.clear();
+  }
+  {
+    std::lock_guard<std::mutex> lock(g_HarvestableMutex);
+    g_HarvestableList.clear();
+  }
+
+  return oUnloadSceneNameIndexInternal(sceneName, sceneBuildIndex, immediately,
+                                       options, outSuccess);
+}
 
 void hkHarvestableManagerRemove(void *__this) {
   {
@@ -257,11 +283,13 @@ void *vp_FPSCamera_GetCamera(void *vp_FPSCamera) {
 }
 
 std::string GetDisplayName(void *ai) {
+  if (ai == nullptr) return "Unknown";
   auto ustr = *(Unity::System_String **)((uintptr_t)ai + off_DisplayName);
   return ustr ? ustr->ToString() : "Unknown";
 }
 
 std::string GetGearItemDisplayName(void *gearItem) {
+  if (gearItem == nullptr) return "Unknown";
   auto ustr = GearItem_get_DisplayNameWithCondition(gearItem);
   return ustr ? ustr->ToString() : "Unknown";
 }
@@ -314,8 +342,8 @@ void DrawESP() {
   if (g_ShowBaseAiESP) {
     std::lock_guard<std::mutex> lock(g_BaseAiMutex);
     for (auto &ai : g_BaseAiList) {
+      if (ai.ptr == nullptr || ai.transform == nullptr) continue;
       if (g_ItemHidden[ai.name]) continue;
-      if (!ai.transform) continue;
 
       // Use cached transform to get position directly
       Unity::Vector3 worldPos = Transform_get_position(ai.transform);
@@ -367,8 +395,8 @@ void DrawESP() {
   if (g_ShowGearItemESP) {
     std::lock_guard<std::mutex> lock(g_GearItemMutex);
     for (auto &item : g_GearItemList) {
+      if (item.ptr == nullptr || item.transform == nullptr) continue;
       if (g_ItemHidden[item.name]) continue;
-      if (!item.transform) continue;
 
       // Use cached transform to get position directly
       Unity::Vector3 worldPos = Transform_get_position(item.transform);
@@ -402,7 +430,7 @@ void DrawESP() {
   if (g_ShowHarvestableESP) {
     std::lock_guard<std::mutex> lock(g_HarvestableMutex);
     for (auto &harvestable : g_HarvestableList) {
-      if (!harvestable.transform) continue;
+      if (harvestable.ptr == nullptr || harvestable.transform == nullptr) continue;
       // Use cached transform to get position directly
       Unity::Vector3 worldPos = Transform_get_position(harvestable.transform);
       float distSq = Vector3_DistanceSquared(camera_position, worldPos);
@@ -682,6 +710,15 @@ DWORD WINAPI MainThread(LPVOID lpReserved) {
   if (MH_OK !=
       MH_CreateHook(harvestableManagerRemovePtr, &hkHarvestableManagerRemove,
                     reinterpret_cast<void **>(&oHarvestableManagerRemove)))
+    return 1;
+
+  auto unloadSceneNameIndexInternalPtr = IL2CPP::Class::Utils::GetMethodPointer(
+      "UnityEngine.SceneManagement.SceneManager",
+      "UnloadSceneNameIndexInternal", 5);
+  if (MH_OK != MH_CreateHook(
+                    unloadSceneNameIndexInternalPtr,
+                    &hkUnloadSceneNameIndexInternal,
+                    reinterpret_cast<void **>(&oUnloadSceneNameIndexInternal)))
     return 1;
 
   GameManager_GetMainCamera = reinterpret_cast<void *(*)()>(
