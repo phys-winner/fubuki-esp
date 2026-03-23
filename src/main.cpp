@@ -36,6 +36,8 @@ WNDPROC oWndProc = NULL;
 static tReset oGearManagerReset = NULL;
 static tReset oBaseAiManagerReset = NULL;
 static tReset oHarvestableManagerReset = NULL;
+typedef void (*tLoadMainMenu)();
+static tLoadMainMenu oGameManagerLoadMainMenu = NULL;
 
 // Global variables
 ID3D11Device *pDevice = NULL;
@@ -260,6 +262,22 @@ void hkHarvestableManagerReset() {
     g_HarvestableList.clear();
   }
   oHarvestableManagerReset();
+}
+
+void hkGameManagerLoadMainMenu() {
+  {
+    std::lock_guard<std::mutex> lock(g_BaseAiMutex);
+    g_BaseAiList.clear();
+  }
+  {
+    std::lock_guard<std::mutex> lock(g_GearItemMutex);
+    g_GearItemList.clear();
+  }
+  {
+    std::lock_guard<std::mutex> lock(g_HarvestableMutex);
+    g_HarvestableList.clear();
+  }
+  oGameManagerLoadMainMenu();
 }
 
 void hkHarvestableManagerRemove(void *__this) {
@@ -509,9 +527,7 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
   if (GetAsyncKeyState(VK_INSERT) & 1) {
     showMenu = !showMenu;
   }
-  g_DrawEsp = (g_ShowBaseAiESP && !g_BaseAiList.empty()) 
-    || (g_ShowGearItemESP && !g_GearItemList.empty()) 
-    || (g_ShowHarvestableESP && !g
+  g_DrawEsp = g_ShowBaseAiESP || g_ShowGearItemESP || g_ShowHarvestableESP;
 
   if (g_DrawEsp || showMenu) {
     ImGui_ImplDX11_NewFrame();
@@ -748,6 +764,13 @@ DWORD WINAPI MainThread(LPVOID lpReserved) {
   if (MH_OK !=
       MH_CreateHook(harvestableManagerResetPtr, &hkHarvestableManagerReset,
                     reinterpret_cast<void **>(&oHarvestableManagerReset)))
+    return 1;
+
+  auto gameManagerLoadMainMenuPtr =
+      IL2CPP::Class::Utils::GetMethodPointer("GameManager", "LoadMainMenu", 0);
+  if (MH_OK != MH_CreateHook(
+                    gameManagerLoadMainMenuPtr, &hkGameManagerLoadMainMenu,
+                    reinterpret_cast<void **>(&oGameManagerLoadMainMenu)))
     return 1;
 
   GameManager_GetMainCamera = reinterpret_cast<void *(*)()>(
