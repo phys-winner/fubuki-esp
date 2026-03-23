@@ -8,6 +8,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <map>
@@ -300,7 +301,7 @@ void DrawESP() {
   if (camera == nullptr)
       return;
 
-  ImDrawList *draw = ImGui::GetForegroundDrawList();
+  ImDrawList *draw = ImGui::GetBackgroundDrawList();
   Unity::Vector3 camera_position = GetCameraPosition(camera);
   float maxDistSq = g_EspDistance * g_EspDistance;
 
@@ -463,13 +464,8 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
 
     DrawESP();
     if (showMenu) {
-
-      ImGui::Begin("Fubuki-ESP | The Long Dark", &showMenu,
-                   ImGuiWindowFlags_AlwaysAutoResize);
-      ImGui::Text("Menu Controls:");
-      ImGui::BulletText("INSERT: Toggle Menu");
-      ImGui::BulletText("END: Unload DLL (Safely)");
-
+      ImGui::Begin("Fubuki-ESP | The Long Dark", &showMenu, ImGuiWindowFlags_AlwaysAutoResize);
+      ImGui::TextDisabled("Controls: [INS] Menu | [END] Unload");
       ImGui::Separator();
 
       ImGui::Checkbox("BaseAi ESP", &g_ShowBaseAiESP);
@@ -497,73 +493,44 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
     }
 
     if (g_ShowVisibilityMenu) {
-      ImGui::Begin("ESP Item Visibility", &g_ShowVisibilityMenu, ImGuiWindowFlags_AlwaysAutoResize);
-      
-      static int sortType = 0; // 0 = name, 1 = count
-      static bool sortAsc = true;
-      
-      ImGui::RadioButton("Sort by Name", &sortType, 0); ImGui::SameLine();
-      ImGui::RadioButton("Sort by Quantity", &sortType, 1);
-      ImGui::Checkbox("Ascending", &sortAsc);
-      ImGui::Separator();
-      
+      ImGui::Begin("ESP Item Visibility", &g_ShowVisibilityMenu);
+      ImGui::SetWindowSize(ImVec2(300, 600), ImGuiCond_FirstUseEver);
+
+      static char search[64] = "";
+      ImGui::InputText("Filter", search, IM_ARRAYSIZE(search));
+
+      static int sortType = 0; static bool sortAsc = true;
+      ImGui::RadioButton("Name", &sortType, 0); ImGui::SameLine();
+      ImGui::RadioButton("Qty", &sortType, 1); ImGui::SameLine();
+      ImGui::Checkbox("Asc", &sortAsc);
+
       struct ItemCount { std::string name; int count; bool visible; };
       std::map<std::string, int> counts;
-      {
-          std::lock_guard<std::mutex> lock1(g_GearItemMutex);
-          for(auto& item : g_GearItemList) counts[item.name]++;
-      }
-      {
-          std::lock_guard<std::mutex> lock2(g_BaseAiMutex);
-          for(auto& ai : g_BaseAiList) counts[ai.name]++;
-      }
-      
+      { std::lock_guard<std::mutex> l1(g_GearItemMutex); for(auto& i : g_GearItemList) counts[i.name]++; }
+      { std::lock_guard<std::mutex> l2(g_BaseAiMutex); for(auto& a : g_BaseAiList) counts[a.name]++; }
+
       std::vector<ItemCount> items;
+      std::string filter(search); std::transform(filter.begin(), filter.end(), filter.begin(), ::tolower);
       for(auto& kv : counts) {
-          items.push_back({kv.first, kv.second, !g_ItemHidden[kv.first]});
+          std::string nameLower = kv.first; std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(), ::tolower);
+          if (filter.empty() || nameLower.find(filter) != std::string::npos)
+              items.push_back({kv.first, kv.second, !g_ItemHidden[kv.first]});
       }
-      
+
       std::sort(items.begin(), items.end(), [](const ItemCount& a, const ItemCount& b) {
-          if (sortType == 0) {
-              return sortAsc ? a.name < b.name : a.name > b.name;
-          } else {
-              if (a.count == b.count) return sortAsc ? a.name < b.name : a.name > b.name;
-              return sortAsc ? a.count < b.count : a.count > b.count;
-          }
+          if (sortType == 0) return sortAsc ? a.name < b.name : a.name > b.name;
+          return (a.count == b.count) ? (sortAsc ? a.name < b.name : a.name > b.name) : (sortAsc ? a.count < b.count : a.count > b.count);
       });
-      
-      int totalItems = (int)items.size();
-      int totalPages = (totalItems + 14) / 15;
-      if (totalPages == 0) totalPages = 1;
 
-      static int currentPage = 0;
-      if (currentPage >= totalPages) currentPage = totalPages - 1;
-      if (currentPage < 0) currentPage = 0;
-
-      int startIdx = currentPage * 15;
-      int endIdx = startIdx + 15 < totalItems ? startIdx + 15 : totalItems;
-
-      for(int i = startIdx; i < endIdx; ++i) {
-          auto& item = items[i];
-          bool checked = item.visible;
-          std::string label = "[" + std::to_string(item.count) + "] " + item.name + "##" + item.name;
-          if (ImGui::Checkbox(label.c_str(), &checked)) {
-              g_ItemHidden[item.name] = !checked;
-              SaveConfig();
+      if (ImGui::BeginChild("##scrolly", ImVec2(0, 0), true)) {
+          for(auto& item : items) {
+              bool checked = item.visible;
+              if (ImGui::Checkbox(("[ " + std::to_string(item.count) + " ] " + item.name + "##" + item.name).c_str(), &checked)) {
+                  g_ItemHidden[item.name] = !checked; SaveConfig();
+              }
           }
       }
-
-      ImGui::Separator();
-      if (ImGui::Button("< Prev") && currentPage > 0) {
-          currentPage--;
-      }
-      ImGui::SameLine();
-      ImGui::Text("Page %d of %d", currentPage + 1, totalPages);
-      ImGui::SameLine();
-      if (ImGui::Button("Next >") && currentPage < totalPages - 1) {
-          currentPage++;
-      }
-      
+      ImGui::EndChild();
       ImGui::End();
     }
 
