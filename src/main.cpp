@@ -301,7 +301,7 @@ void DrawESP() {
   if (camera == nullptr)
       return;
 
-  ImDrawList *draw = ImGui::GetForegroundDrawList();
+  ImDrawList *draw = ImGui::GetBackgroundDrawList();
   Unity::Vector3 camera_position = GetCameraPosition(camera);
   float maxDistSq = g_EspDistance * g_EspDistance;
 
@@ -494,7 +494,7 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
 
     if (g_ShowVisibilityMenu) {
       ImGui::Begin("ESP Item Visibility", &g_ShowVisibilityMenu);
-      ImGui::SetWindowSize(ImVec2(300, 450), ImGuiCond_FirstUseEver);
+      ImGui::SetWindowSize(ImVec2(300, 600), ImGuiCond_FirstUseEver);
 
       static char search[64] = "";
       ImGui::InputText("Filter", search, IM_ARRAYSIZE(search));
