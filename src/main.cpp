@@ -319,14 +319,26 @@ Unity::Vector3 GetGearItemWorldPosition(Unity::CComponent *gearItem) {
 }
 
 Unity::Vector3 GetWorldPosition(Unity::CComponent *ai) {
+  if (ai == nullptr) {
+    return {-9999.0f, -9999.0f, -9999.0f};
+  }
   auto transform = Component_get_transform(ai);
+  if (transform == nullptr) {
+    return {-9999.0f, -9999.0f, -9999.0f};
+  }
   auto pos = Transform_get_position(transform);
 
   return pos;
 }
 
 Unity::Vector3 GetCameraPosition(void *camera) {
+  if (camera == nullptr) {
+    return {-9999.0f, -9999.0f, -9999.0f};
+  }
   auto transform = Component_get_transform(camera);
+  if (transform == nullptr) {
+    return {-9999.0f, -9999.0f, -9999.0f};
+  }
   auto pos = Transform_get_position(transform);
 
   return pos;
