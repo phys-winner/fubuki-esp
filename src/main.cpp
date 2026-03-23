@@ -56,22 +56,25 @@ bool g_ShowVisibilityMenu = false;
 std::map<std::string, bool> g_ItemHidden;
 
 void SaveConfig() {
-    char path[MAX_PATH];
-    GetModuleFileNameA(NULL, path, MAX_PATH);
+    char path[MAX_PATH] = { 0 };
+    if (!GetModuleFileNameA(NULL, path, MAX_PATH)) return;
     std::string exePath(path);
     std::string iniPath = exePath.substr(0, exePath.find_last_of("\\/")) + "\\fubuki_esp_visibility.ini";
     std::ofstream out(iniPath);
     out << "[HiddenItems]\n";
     for(const auto& kv : g_ItemHidden) {
         if (kv.second) {
+            // Basic sanitization: skip if name contains newline or '=' to prevent INI corruption
+            if (kv.first.find('\n') != std::string::npos || kv.first.find('\r') != std::string::npos || kv.first.find('=') != std::string::npos)
+                continue;
             out << kv.first << "=1\n";
         }
     }
 }
 
 void LoadConfig() {
-    char path[MAX_PATH];
-    GetModuleFileNameA(NULL, path, MAX_PATH);
+    char path[MAX_PATH] = { 0 };
+    if (!GetModuleFileNameA(NULL, path, MAX_PATH)) return;
     std::string exePath(path);
     std::string iniPath = exePath.substr(0, exePath.find_last_of("\\/")) + "\\fubuki_esp_visibility.ini";
     std::ifstream in(iniPath);
@@ -145,7 +148,10 @@ LRESULT CALLBACK WndProc(const HWND hWnd, UINT uMsg, WPARAM wParam,
   if (showMenu && ImGui_ImplWin32_WndProcHandler(hWnd, uMsg, wParam, lParam))
     return true;
 
-  return CallWindowProc(oWndProc, hWnd, uMsg, wParam, lParam);
+  if (oWndProc)
+    return CallWindowProc(oWndProc, hWnd, uMsg, wParam, lParam);
+
+  return DefWindowProc(hWnd, uMsg, wParam, lParam);
 }
 
 using tBaseAiManagerAdd = void (*)(void *);
@@ -309,6 +315,7 @@ void DrawESP() {
     std::lock_guard<std::mutex> lock(g_BaseAiMutex);
     for (auto &ai : g_BaseAiList) {
       if (g_ItemHidden[ai.name]) continue;
+      if (!ai.transform) continue;
 
       // Use cached transform to get position directly
       Unity::Vector3 worldPos = Transform_get_position(ai.transform);
@@ -361,6 +368,7 @@ void DrawESP() {
     std::lock_guard<std::mutex> lock(g_GearItemMutex);
     for (auto &item : g_GearItemList) {
       if (g_ItemHidden[item.name]) continue;
+      if (!item.transform) continue;
 
       // Use cached transform to get position directly
       Unity::Vector3 worldPos = Transform_get_position(item.transform);
@@ -394,6 +402,7 @@ void DrawESP() {
   if (g_ShowHarvestableESP) {
     std::lock_guard<std::mutex> lock(g_HarvestableMutex);
     for (auto &harvestable : g_HarvestableList) {
+      if (!harvestable.transform) continue;
       // Use cached transform to get position directly
       Unity::Vector3 worldPos = Transform_get_position(harvestable.transform);
       float distSq = Vector3_DistanceSquared(camera_position, worldPos);
@@ -471,13 +480,22 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
       ImGui::Checkbox("BaseAi ESP", &g_ShowBaseAiESP);
       ImGui::Checkbox("Show HP", &g_ShowBaseAiHP);
       ImGui::Checkbox("Show Name", &g_ShowBaseAiName);
-      ImGui::Text("Found %zu BaseAi", g_BaseAiList.size());
+      {
+        std::lock_guard<std::mutex> lock(g_BaseAiMutex);
+        ImGui::Text("Found %zu BaseAi", g_BaseAiList.size());
+      }
 
       ImGui::Checkbox("GearItem ESP", &g_ShowGearItemESP);
-      ImGui::Text("Found %zu GearItem", g_GearItemList.size());
+      {
+        std::lock_guard<std::mutex> lock(g_GearItemMutex);
+        ImGui::Text("Found %zu GearItem", g_GearItemList.size());
+      }
 
       ImGui::Checkbox("Harvestable ESP", &g_ShowHarvestableESP);
-      ImGui::Text("Found %zu Harvestable", g_HarvestableList.size());
+      {
+        std::lock_guard<std::mutex> lock(g_HarvestableMutex);
+        ImGui::Text("Found %zu Harvestable", g_HarvestableList.size());
+      }
 
       ImGui::SliderFloat("ESP Distance", &g_EspDistance, 10.0f, 1000.0f);
 
