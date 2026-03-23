@@ -8,5 +8,5 @@ This journal tracks critical security learnings, vulnerability patterns, and reu
 
 ## 2025-05-15 - Use-After-Free during scene transitions
 **Vulnerability:** Use-After-Free (UAF) leading to process crash.
-**Learning:** Unity's internal scene management can destroy objects without triggering manager-specific `Remove` methods, leaving stale pointers in ESP caches.
-**Prevention:** Hook `SceneManager.UnloadSceneNameIndexInternal` to clear all entity caches before unloads begin and implement defensive null checks in the rendering loop.
+**Learning:** Unity's internal scene management can destroy objects without triggering manager-specific `Remove` methods, leaving stale pointers in ESP caches. Returning to the main menu resets the managers but may skip individual `Remove` calls.
+**Prevention:** Hook `GearManager.Reset`, `BaseAiManager.Reset`, and `HarvestableManager.Reset` to clear respective entity caches before the game resets the managers, and implement defensive null checks in the rendering loop.

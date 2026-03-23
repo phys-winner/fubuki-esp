@@ -27,14 +27,15 @@ typedef void(WINAPI *DrawIndexed)(ID3D11DeviceContext *pContext,
                                   UINT IndexCount, UINT StartIndexLocation,
                                   INT BaseVertexLocation);
 typedef LRESULT(CALLBACK *WNDPROC)(HWND, UINT, WPARAM, LPARAM);
-typedef void *(*tUnloadSceneNameIndexInternal)(Unity::System_String *, int, bool,
-                                               int, bool *);
+typedef void (*tReset)();
 
 // Original function pointers
 static Present oPresent = NULL;
 static ResizeBuffers oResizeBuffers = NULL;
 WNDPROC oWndProc = NULL;
-tUnloadSceneNameIndexInternal oUnloadSceneNameIndexInternal = NULL;
+static tReset oGearManagerReset = NULL;
+static tReset oBaseAiManagerReset = NULL;
+static tReset oHarvestableManagerReset = NULL;
 
 // Global variables
 ID3D11Device *pDevice = NULL;
@@ -237,24 +238,28 @@ void hkHarvestableManagerAdd(void *__this) {
 using tHarvestableManagerRemove = void (*)(void *);
 tHarvestableManagerRemove oHarvestableManagerRemove;
 
-void *hkUnloadSceneNameIndexInternal(Unity::System_String *sceneName,
-                                     int sceneBuildIndex, bool immediately,
-                                     int options, bool *outSuccess) {
-  {
-    std::lock_guard<std::mutex> lock(g_BaseAiMutex);
-    g_BaseAiList.clear();
-  }
+void hkGearManagerReset() {
   {
     std::lock_guard<std::mutex> lock(g_GearItemMutex);
     g_GearItemList.clear();
   }
+  oGearManagerReset();
+}
+
+void hkBaseAiManagerReset() {
+  {
+    std::lock_guard<std::mutex> lock(g_BaseAiMutex);
+    g_BaseAiList.clear();
+  }
+  oBaseAiManagerReset();
+}
+
+void hkHarvestableManagerReset() {
   {
     std::lock_guard<std::mutex> lock(g_HarvestableMutex);
     g_HarvestableList.clear();
   }
-
-  return oUnloadSceneNameIndexInternal(sceneName, sceneBuildIndex, immediately,
-                                       options, outSuccess);
+  oHarvestableManagerReset();
 }
 
 void hkHarvestableManagerRemove(void *__this) {
@@ -712,13 +717,23 @@ DWORD WINAPI MainThread(LPVOID lpReserved) {
                     reinterpret_cast<void **>(&oHarvestableManagerRemove)))
     return 1;
 
-  auto unloadSceneNameIndexInternalPtr = IL2CPP::Class::Utils::GetMethodPointer(
-      "UnityEngine.SceneManagement.SceneManager",
-      "UnloadSceneNameIndexInternal", 5);
-  if (MH_OK != MH_CreateHook(
-                    unloadSceneNameIndexInternalPtr,
-                    &hkUnloadSceneNameIndexInternal,
-                    reinterpret_cast<void **>(&oUnloadSceneNameIndexInternal)))
+  auto gearManagerResetPtr =
+      IL2CPP::Class::Utils::GetMethodPointer("GearManager", "Reset", 0);
+  if (MH_OK != MH_CreateHook(gearManagerResetPtr, &hkGearManagerReset,
+                             reinterpret_cast<void **>(&oGearManagerReset)))
+    return 1;
+
+  auto baseAiManagerResetPtr =
+      IL2CPP::Class::Utils::GetMethodPointer("BaseAiManager", "Reset", 0);
+  if (MH_OK != MH_CreateHook(baseAiManagerResetPtr, &hkBaseAiManagerReset,
+                             reinterpret_cast<void **>(&oBaseAiManagerReset)))
+    return 1;
+
+  auto harvestableManagerResetPtr =
+      IL2CPP::Class::Utils::GetMethodPointer("HarvestableManager", "Reset", 0);
+  if (MH_OK !=
+      MH_CreateHook(harvestableManagerResetPtr, &hkHarvestableManagerReset,
+                    reinterpret_cast<void **>(&oHarvestableManagerReset)))
     return 1;
 
   GameManager_GetMainCamera = reinterpret_cast<void *(*)()>(
