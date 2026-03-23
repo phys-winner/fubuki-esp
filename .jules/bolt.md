@@ -1,0 +1,3 @@
+## 2025-05-15 - [Initial Profiling & Planning]
+**Learning:** In internal game cheats, making repeated calls to IL2CPP resolver methods like `Component_get_transform` and `GameObject_get_transform` inside the rendering loop (usually `hkPresent`) is a significant performance bottleneck. These calls involve cross-domain overhead and can be executed hundreds of times per frame depending on the number of items.
+**Action:** Always cache transform pointers and other static component references during item registration (Add/Remove hooks) to minimize per-frame IL2CPP overhead. Use squared distance comparisons to early-exit from the rendering loop before performing expensive `WorldToScreenPoint` calculations.
