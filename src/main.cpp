@@ -9,12 +9,15 @@
 
 #include <algorithm>
 #include <cctype>
+#include <atomic>
 #include <cmath>
 #include <fstream>
 #include <map>
 #include <mutex>
 #include <string>
 #include <vector>
+
+std::atomic<bool> g_Running{true};
 
 // Tyedefs for hooked functions
 typedef HRESULT(WINAPI *Present)(IDXGISwapChain *pSwapChain, UINT SyncInterval,
@@ -247,21 +250,28 @@ void hkHarvestableManagerRemove(void *__this) {
 }
 
 float GetCurrentHP(void *ai) {
+  if (ai == nullptr) return 0.0f;
   return *(float *)((uintptr_t)ai + off_CurrentHP);
 }
 
-float GetMaxHP(void *ai) { return *(float *)((uintptr_t)ai + off_MaxHP); }
+float GetMaxHP(void *ai) {
+  if (ai == nullptr) return 0.0f;
+  return *(float *)((uintptr_t)ai + off_MaxHP);
+}
 
 void *vp_FPSCamera_GetCamera(void *vp_FPSCamera) {
+  if (vp_FPSCamera == nullptr) return nullptr;
   return *(void **)((uintptr_t)vp_FPSCamera + off_Camera);
 }
 
 std::string GetDisplayName(void *ai) {
+  if (ai == nullptr) return "Unknown";
   auto ustr = *(Unity::System_String **)((uintptr_t)ai + off_DisplayName);
   return ustr ? ustr->ToString() : "Unknown";
 }
 
 std::string GetGearItemDisplayName(void *gearItem) {
+  if (gearItem == nullptr) return "Unknown";
   auto ustr = GearItem_get_DisplayNameWithCondition(gearItem);
   return ustr ? ustr->ToString() : "Unknown";
 }
@@ -505,7 +515,7 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
       }
       ImGui::SameLine();
       if (ImGui::Button("Unload DLL", ImVec2(120, 0))) {
-        // Signal unload
+        g_Running = false;
       }
       ImGui::End();
     }
@@ -564,20 +574,28 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
 HRESULT WINAPI hkResizeBuffers(IDXGISwapChain *pSwapChain, UINT BufferCount,
                                UINT Width, UINT Height, DXGI_FORMAT NewFormat,
                                UINT SwapChainFlags) {
+  if (!init)
+    return oResizeBuffers(pSwapChain, BufferCount, Width, Height, NewFormat,
+                          SwapChainFlags);
+
   if (mainRenderTargetView) {
-    pContext->OMSetRenderTargets(0, 0, 0);
+    if (pContext) pContext->OMSetRenderTargets(0, 0, 0);
     mainRenderTargetView->Release();
+    mainRenderTargetView = NULL;
   }
 
   HRESULT hr = oResizeBuffers(pSwapChain, BufferCount, Width, Height, NewFormat,
                               SwapChainFlags);
 
   ID3D11Texture2D *pBackBuffer;
-  pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID *)&pBackBuffer);
-  if (SUCCEEDED(hr)) {
-    pDevice->CreateRenderTargetView(pBackBuffer, NULL, &mainRenderTargetView);
-    pBackBuffer->Release();
-    pContext->OMSetRenderTargets(1, &mainRenderTargetView, NULL);
+  if (SUCCEEDED(pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID *)&pBackBuffer))) {
+    if (SUCCEEDED(hr) && pDevice) {
+      pDevice->CreateRenderTargetView(pBackBuffer, NULL, &mainRenderTargetView);
+      pBackBuffer->Release();
+      if (pContext && mainRenderTargetView) pContext->OMSetRenderTargets(1, &mainRenderTargetView, NULL);
+    } else {
+      pBackBuffer->Release();
+    }
   }
 
   ImGuiIO &io = ImGui::GetIO();
@@ -597,8 +615,6 @@ bool InitBaseAiOffsets() {
 }
 
 DWORD WINAPI MainThread(LPVOID lpReserved) {
-  bool g_Running = true;
-
   // Create a dummy swapchain to get the vtable offsets
   D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_0;
   DXGI_SWAP_CHAIN_DESC scd;
