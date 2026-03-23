@@ -110,6 +110,7 @@ struct CachedESPItem {
   void* ptr;
   void* transform; // Cached transform pointer
   std::string name;
+  bool* pHidden;   // Pointer to visibility state in g_ItemHidden for O(1) lookup
 };
 
 std::vector<CachedESPItem> g_BaseAiList;
@@ -164,7 +165,7 @@ void hkBaseAiManagerAdd(void *__this) {
   void* transform = Component_get_transform(__this);
 
   std::lock_guard<std::mutex> lock(g_BaseAiMutex);
-  g_BaseAiList.push_back({__this, transform, name});
+  g_BaseAiList.push_back({__this, transform, name, &g_ItemHidden[name]});
 }
 
 using tBaseAiManagerRemove = void (*)(void *);
@@ -195,7 +196,7 @@ void hkGearManagerAdd(void *__this) {
   void* transform = Component_get_transform(__this);
 
   std::lock_guard<std::mutex> lock(g_GearItemMutex);
-  g_GearItemList.push_back({__this, transform, name});
+  g_GearItemList.push_back({__this, transform, name, &g_ItemHidden[name]});
 }
 
 using tGearManagerRemove = void (*)(void *);
@@ -225,7 +226,7 @@ void hkHarvestableManagerAdd(void *__this) {
   void* transform = Component_get_transform(__this);
 
   std::lock_guard<std::mutex> lock(g_HarvestableMutex);
-  g_HarvestableList.push_back({__this, transform, ""}); // Name not used for harvestables yet
+  g_HarvestableList.push_back({__this, transform, "", nullptr}); // Name not used for harvestables yet
 }
 
 using tHarvestableManagerRemove = void (*)(void *);
@@ -293,10 +294,15 @@ Unity::Vector3 GetWorldPosition(Unity::CComponent *ai) {
 }
 
 Unity::Vector3 GetCameraPosition(void *camera) {
-  auto transform = Component_get_transform(camera);
-  auto pos = Transform_get_position(transform);
+  static void* lastCamera = nullptr;
+  static void* cachedTransform = nullptr;
 
-  return pos;
+  if (camera != lastCamera) {
+    lastCamera = camera;
+    cachedTransform = Component_get_transform(camera);
+  }
+
+  return Transform_get_position(cachedTransform);
 }
 
 void DrawESP() {
@@ -308,13 +314,15 @@ void DrawESP() {
       return;
 
   ImDrawList *draw = ImGui::GetBackgroundDrawList();
+  ImGuiIO &io = ImGui::GetIO();
   Unity::Vector3 camera_position = GetCameraPosition(camera);
   float maxDistSq = g_EspDistance * g_EspDistance;
+  char textBuf[256];
 
   if (g_ShowBaseAiESP) {
     std::lock_guard<std::mutex> lock(g_BaseAiMutex);
     for (auto &ai : g_BaseAiList) {
-      if (g_ItemHidden[ai.name]) continue;
+      if (ai.pHidden && *ai.pHidden) continue;
       if (!ai.transform) continue;
 
       // Use cached transform to get position directly
@@ -330,44 +338,28 @@ void DrawESP() {
         continue;
 
       float dist = std::sqrtf(distSq);
-      std::string text = "* ";
+      int offset = sprintf_s(textBuf, "* ");
+
       if (g_ShowBaseAiHP) {
         int hp = (int)GetCurrentHP(ai.ptr);
         int maxHp = (int)GetMaxHP(ai.ptr);
-
-        char hpBuf[32];
-        char maxHpBuf[32];
-
-        sprintf_s(hpBuf, "%d", hp);
-        sprintf_s(maxHpBuf, "%d", maxHp);
-
-        text += "[";
-        text += hpBuf;
-        text += "/";
-        text += maxHpBuf;
-        text += "]";
+        offset += sprintf_s(textBuf + offset, sizeof(textBuf) - offset, "[%d/%d] ", hp, maxHp);
       }
 
-      char distBuf[32];
-      sprintf_s(distBuf, "%.1f", dist);
-      text += " [";
-      text += distBuf;
-      text += "m.] ";
+      offset += sprintf_s(textBuf + offset, sizeof(textBuf) - offset, "[%.1fm.] ", dist);
+
       if (g_ShowBaseAiName)
-        text += ai.name;
+        sprintf_s(textBuf + offset, sizeof(textBuf) - offset, "%s", ai.name.c_str());
 
-      ImGuiIO &io = ImGui::GetIO();
       float y = io.DisplaySize.y - screenPos.y;
-
-      draw->AddText(ImVec2(screenPos.x, y), IM_COL32(255, 100, 100, 255),
-                    text.c_str());
+      draw->AddText(ImVec2(screenPos.x, y), IM_COL32(255, 100, 100, 255), textBuf);
     }
   }
 
   if (g_ShowGearItemESP) {
     std::lock_guard<std::mutex> lock(g_GearItemMutex);
     for (auto &item : g_GearItemList) {
-      if (g_ItemHidden[item.name]) continue;
+      if (item.pHidden && *item.pHidden) continue;
       if (!item.transform) continue;
 
       // Use cached transform to get position directly
@@ -382,20 +374,10 @@ void DrawESP() {
         continue;
 
       float dist = std::sqrtf(distSq);
-      std::string text = "* ";
+      sprintf_s(textBuf, "* [%.1fm.] %s", dist, item.name.c_str());
 
-      char distBuf[32];
-      sprintf_s(distBuf, "%.1f", dist);
-      text += " [";
-      text += distBuf;
-      text += "m.] ";
-      text += item.name;
-
-      ImGuiIO &io = ImGui::GetIO();
       float y = io.DisplaySize.y - screenPos.y;
-
-      draw->AddText(ImVec2(screenPos.x, y), IM_COL32(255, 255, 100, 255),
-                    text.c_str());
+      draw->AddText(ImVec2(screenPos.x, y), IM_COL32(255, 255, 100, 255), textBuf);
     }
   }
 
@@ -415,19 +397,10 @@ void DrawESP() {
         continue;
 
       float dist = std::sqrtf(distSq);
-      std::string text = "* ";
+      sprintf_s(textBuf, "* [%.1fm.]", dist);
 
-      char distBuf[32];
-      sprintf_s(distBuf, "%.1f", dist);
-      text += "[";
-      text += distBuf;
-      text += "m.] ";
-
-      ImGuiIO &io = ImGui::GetIO();
       float y = io.DisplaySize.y - screenPos.y;
-
-      draw->AddText(ImVec2(screenPos.x, y), IM_COL32(255, 255, 100, 255),
-                    text.c_str());
+      draw->AddText(ImVec2(screenPos.x, y), IM_COL32(255, 255, 100, 255), textBuf);
     }
   }
 }
