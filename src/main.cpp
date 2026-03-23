@@ -104,12 +104,13 @@ static Unity::System_String *(*GearItem_get_DisplayNameWithCondition)(
 
 struct CachedESPItem {
   void* ptr;
+  void* transform; // Cached transform pointer
   std::string name;
 };
 
 std::vector<CachedESPItem> g_BaseAiList;
 std::vector<CachedESPItem> g_GearItemList;
-std::vector<void *> g_HarvestableList;
+std::vector<CachedESPItem> g_HarvestableList;
 std::mutex g_BaseAiMutex;
 std::mutex g_GearItemMutex;
 std::mutex g_HarvestableMutex;
@@ -119,11 +120,15 @@ uintptr_t off_MaxHP;
 uintptr_t off_DisplayName;
 uintptr_t off_Camera;
 
-float Vector3_Distance(const Unity::Vector3 &v1, const Unity::Vector3 &v2) {
+float Vector3_DistanceSquared(const Unity::Vector3 &v1, const Unity::Vector3 &v2) {
   float deltaX = v1.x - v2.x;
   float deltaY = v1.y - v2.y;
   float deltaZ = v1.z - v2.z;
-  return std::sqrtf(deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ);
+  return deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ;
+}
+
+float Vector3_Distance(const Unity::Vector3 &v1, const Unity::Vector3 &v2) {
+  return std::sqrtf(Vector3_DistanceSquared(v1, v2));
 }
 
 // Forward declarations
@@ -149,8 +154,10 @@ void hkBaseAiManagerAdd(void *__this) {
   oBaseAiManagerAdd(__this);
 
   std::string name = GetDisplayName(__this);
+  void* transform = Component_get_transform(__this);
+
   std::lock_guard<std::mutex> lock(g_BaseAiMutex);
-  g_BaseAiList.push_back({__this, name});
+  g_BaseAiList.push_back({__this, transform, name});
 }
 
 using tBaseAiManagerRemove = void (*)(void *);
@@ -178,8 +185,10 @@ void hkGearManagerAdd(void *__this) {
   oGearManagerAdd(__this);
 
   std::string name = GetGearItemDisplayName(__this);
+  void* transform = Component_get_transform(__this);
+
   std::lock_guard<std::mutex> lock(g_GearItemMutex);
-  g_GearItemList.push_back({__this, name});
+  g_GearItemList.push_back({__this, transform, name});
 }
 
 using tGearManagerRemove = void (*)(void *);
@@ -206,8 +215,10 @@ tHarvestableManagerAdd oHarvestableManagerAdd;
 void hkHarvestableManagerAdd(void *__this) {
   oHarvestableManagerAdd(__this);
 
+  void* transform = Component_get_transform(__this);
+
   std::lock_guard<std::mutex> lock(g_HarvestableMutex);
-  g_HarvestableList.push_back(__this);
+  g_HarvestableList.push_back({__this, transform, ""}); // Name not used for harvestables yet
 }
 
 using tHarvestableManagerRemove = void (*)(void *);
@@ -216,8 +227,8 @@ tHarvestableManagerRemove oHarvestableManagerRemove;
 void hkHarvestableManagerRemove(void *__this) {
   {
     std::lock_guard<std::mutex> lock(g_HarvestableMutex);
-    auto it =
-        std::find(g_HarvestableList.begin(), g_HarvestableList.end(), __this);
+    auto it = std::find_if(g_HarvestableList.begin(), g_HarvestableList.end(),
+                           [__this](const CachedESPItem& item) { return item.ptr == __this; });
 
     if (it != g_HarvestableList.end()) {
       std::swap(*it,
@@ -286,28 +297,31 @@ void DrawESP() {
     return;
 
   auto camera = GameManager_GetMainCamera();
+  if (camera == nullptr)
+      return;
+
   ImDrawList *draw = ImGui::GetForegroundDrawList();
   Unity::Vector3 camera_position = GetCameraPosition(camera);
+  float maxDistSq = g_EspDistance * g_EspDistance;
 
   if (g_ShowBaseAiESP) {
     std::lock_guard<std::mutex> lock(g_BaseAiMutex);
     for (auto &ai : g_BaseAiList) {
       if (g_ItemHidden[ai.name]) continue;
 
-      Unity::Vector3 worldPos =
-          GetWorldPosition(reinterpret_cast<Unity::CComponent *>(ai.ptr));
-      Unity::Vector3 screenPos{};
+      // Use cached transform to get position directly
+      Unity::Vector3 worldPos = Transform_get_position(ai.transform);
+      float distSq = Vector3_DistanceSquared(camera_position, worldPos);
+      if (distSq > maxDistSq)
+          continue;
 
-      screenPos = Camera_WorldToScreenPoint(
+      Unity::Vector3 screenPos = Camera_WorldToScreenPoint(
           camera, worldPos, Unity::m_eCameraEye::m_eCameraEye_Center);
 
       if (screenPos.z < 0.1f)
         continue;
 
-      float dist = Vector3_Distance(camera_position, worldPos);
-      if (dist > g_EspDistance)
-        continue;
-
+      float dist = std::sqrtf(distSq);
       std::string text = "* ";
       if (g_ShowBaseAiHP) {
         int hp = (int)GetCurrentHP(ai.ptr);
@@ -335,7 +349,6 @@ void DrawESP() {
         text += ai.name;
 
       ImGuiIO &io = ImGui::GetIO();
-      float x = screenPos.x;
       float y = io.DisplaySize.y - screenPos.y;
 
       draw->AddText(ImVec2(screenPos.x, y), IM_COL32(255, 100, 100, 255),
@@ -348,23 +361,18 @@ void DrawESP() {
     for (auto &item : g_GearItemList) {
       if (g_ItemHidden[item.name]) continue;
 
-      Unity::Vector3 worldPos =
-          GetGearItemWorldPosition(reinterpret_cast<Unity::CComponent *>(item.ptr));
-      if (worldPos.x == -9999.0f && worldPos.y == -9999.0f &&
-          worldPos.z == -9999.0f) {
-        continue;
-      }
-      Unity::Vector3 screenPos{};
+      // Use cached transform to get position directly
+      Unity::Vector3 worldPos = Transform_get_position(item.transform);
+      float distSq = Vector3_DistanceSquared(camera_position, worldPos);
+      if (distSq > maxDistSq)
+          continue;
 
-      screenPos = Camera_WorldToScreenPoint(
+      Unity::Vector3 screenPos = Camera_WorldToScreenPoint(
           camera, worldPos, Unity::m_eCameraEye::m_eCameraEye_Center);
       if (screenPos.z < 0.1f)
         continue;
 
-      float dist = Vector3_Distance(camera_position, worldPos);
-      if (dist > g_EspDistance)
-        continue;
-
+      float dist = std::sqrtf(distSq);
       std::string text = "* ";
 
       char distBuf[32];
@@ -375,7 +383,6 @@ void DrawESP() {
       text += item.name;
 
       ImGuiIO &io = ImGui::GetIO();
-      float x = screenPos.x;
       float y = io.DisplaySize.y - screenPos.y;
 
       draw->AddText(ImVec2(screenPos.x, y), IM_COL32(255, 255, 100, 255),
@@ -386,23 +393,18 @@ void DrawESP() {
   if (g_ShowHarvestableESP) {
     std::lock_guard<std::mutex> lock(g_HarvestableMutex);
     for (auto &harvestable : g_HarvestableList) {
-      Unity::Vector3 worldPos = GetGearItemWorldPosition(
-          reinterpret_cast<Unity::CComponent *>(harvestable));
-      if (worldPos.x == -9999.0f && worldPos.y == -9999.0f &&
-          worldPos.z == -9999.0f) {
-        continue;
-      }
-      Unity::Vector3 screenPos{};
+      // Use cached transform to get position directly
+      Unity::Vector3 worldPos = Transform_get_position(harvestable.transform);
+      float distSq = Vector3_DistanceSquared(camera_position, worldPos);
+      if (distSq > maxDistSq)
+          continue;
 
-      screenPos = Camera_WorldToScreenPoint(
+      Unity::Vector3 screenPos = Camera_WorldToScreenPoint(
           camera, worldPos, Unity::m_eCameraEye::m_eCameraEye_Center);
       if (screenPos.z < 0.1f)
         continue;
 
-      float dist = Vector3_Distance(camera_position, worldPos);
-      if (dist > g_EspDistance)
-        continue;
-
+      float dist = std::sqrtf(distSq);
       std::string text = "* ";
 
       char distBuf[32];
@@ -412,7 +414,6 @@ void DrawESP() {
       text += "m.] ";
 
       ImGuiIO &io = ImGui::GetIO();
-      float x = screenPos.x;
       float y = io.DisplaySize.y - screenPos.y;
 
       draw->AddText(ImVec2(screenPos.x, y), IM_COL32(255, 255, 100, 255),
