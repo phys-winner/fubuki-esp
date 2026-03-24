@@ -121,7 +121,7 @@ void LoadConfig() {
     }
 }
 
-static void *(*GameManager_GetMainCamera)();
+static void *(*Camera_get_main)();
 static Unity::Vector3 (*Camera_WorldToScreenPoint)(void *camera,
                                                    Unity::Vector3 position,
                                                    int eye);
@@ -383,6 +383,7 @@ Unity::Vector3 GetCameraPosition(void *camera) {
   if (camera == nullptr) return {-9999.0f, -9999.0f, -9999.0f};
 
   if (camera != g_LastCamera) {
+    DebugLog("[Fubuki-ESP] Camera changed from %p to %p. Updating transform cache.\n", g_LastCamera, camera);
     g_LastCamera = camera;
     g_CachedCameraTransform = Component_get_transform(camera);
   }
@@ -395,6 +396,7 @@ Unity::Vector3 GetCameraForward(void *camera) {
   if (camera == nullptr) return {0.0f, 0.0f, 1.0f};
 
   if (camera != g_LastCamera) {
+    DebugLog("[Fubuki-ESP] Camera changed from %p to %p. Updating transform cache (forward).\n", g_LastCamera, camera);
     g_LastCamera = camera;
     g_CachedCameraTransform = Component_get_transform(camera);
   }
@@ -407,7 +409,7 @@ void DrawESP() {
   if (!g_DrawEsp)
     return;
 
-  auto camera = GameManager_GetMainCamera();
+  auto camera = Camera_get_main();
   if (camera == nullptr)
       return;
 
@@ -859,8 +861,8 @@ DWORD WINAPI MainThread(LPVOID lpReserved) {
                              reinterpret_cast<void **>(&oGameManagerLoadMainMenu)))
     return 1;
 
-  GameManager_GetMainCamera = reinterpret_cast<void *(*)()>(
-      IL2CPP::Class::Utils::GetMethodPointer("GameManager", "GetMainCamera", 0));
+  Camera_get_main = reinterpret_cast<void *(*)()>(
+      IL2CPP::Class::Utils::GetMethodPointer("UnityEngine.Camera", "get_main", 0));
 
   Camera_WorldToScreenPoint = reinterpret_cast<Unity::Vector3 (*)(void *, Unity::Vector3, int)>(
       IL2CPP::Class::Utils::GetMethodPointer("UnityEngine.Camera", "WorldToScreenPoint", 2));
