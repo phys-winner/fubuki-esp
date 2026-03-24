@@ -51,6 +51,7 @@ bool g_ShowBaseAiName = true;
 
 bool g_ShowGearItemESP = false;
 bool g_ShowHarvestableESP = false;
+bool g_ShowCarcassESP = false;
 
 float g_EspDistance = 250.0f;
 
@@ -119,13 +120,16 @@ struct CachedESPItem {
 std::vector<CachedESPItem> g_BaseAiList;
 std::vector<CachedESPItem> g_GearItemList;
 std::vector<CachedESPItem> g_HarvestableList;
+std::vector<CachedESPItem> g_CarcassList;
 std::mutex g_BaseAiMutex;
 std::mutex g_GearItemMutex;
 std::mutex g_HarvestableMutex;
+std::mutex g_CarcassMutex;
 
 uintptr_t off_CurrentHP;
 uintptr_t off_MaxHP;
 uintptr_t off_DisplayName;
+uintptr_t off_MeatAvailableKG;
 uintptr_t off_Camera;
 
 float Vector3_DistanceSquared(const Unity::Vector3 &v1, const Unity::Vector3 &v2) {
@@ -144,6 +148,7 @@ extern LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg,
                                               WPARAM wParam, LPARAM lParam);
 std::string GetDisplayName(void *ai);
 std::string GetGearItemDisplayName(void *gearItem);
+std::string GetCarcassDisplayName(void *carcass);
 void SaveConfig();
 void LoadConfig();
 
@@ -250,6 +255,37 @@ void hkHarvestableManagerRemove(void *__this) {
   oHarvestableManagerRemove(__this);
 }
 
+using tBodyHarvestManagerAdd = void (*)(void *);
+tBodyHarvestManagerAdd oBodyHarvestManagerAdd;
+
+void hkBodyHarvestManagerAdd(void *__this) {
+  oBodyHarvestManagerAdd(__this);
+
+  std::string name = GetCarcassDisplayName(__this);
+  void* transform = Component_get_transform(__this);
+
+  std::lock_guard<std::mutex> lock(g_CarcassMutex);
+  g_CarcassList.push_back({__this, transform, name, &g_ItemHidden[name]});
+}
+
+using tBodyHarvestManagerRemove = void (*)(void *);
+tBodyHarvestManagerRemove oBodyHarvestManagerRemove;
+
+void hkBodyHarvestManagerRemove(void *__this) {
+  {
+    std::lock_guard<std::mutex> lock(g_CarcassMutex);
+    auto it = std::find_if(g_CarcassList.begin(), g_CarcassList.end(),
+                           [__this](const CachedESPItem& item) { return item.ptr == __this; });
+
+    if (it != g_CarcassList.end()) {
+      std::swap(*it,
+                g_CarcassList.back()); // Swap the element with the last one
+      g_CarcassList.pop_back();        // Remove the last element
+    }
+  }
+  oBodyHarvestManagerRemove(__this);
+}
+
 float GetCurrentHP(void *ai) {
   return *(float *)((uintptr_t)ai + off_CurrentHP);
 }
@@ -268,6 +304,18 @@ std::string GetDisplayName(void *ai) {
 std::string GetGearItemDisplayName(void *gearItem) {
   auto ustr = GearItem_get_DisplayNameWithCondition(gearItem);
   return ustr ? ustr->ToString() : "Unknown";
+}
+
+std::string GetCarcassDisplayName(void *carcass) {
+  typedef Unity::System_String *(*tGetDisplayName)(void *);
+  static tGetDisplayName GetDisplayNameFunc = nullptr;
+  if (!GetDisplayNameFunc) {
+      GetDisplayNameFunc = reinterpret_cast<tGetDisplayName>(
+          IL2CPP::Class::Utils::GetMethodPointer("BodyHarvest", "GetDisplayName", 0));
+  }
+  if (!GetDisplayNameFunc) return "Carcass";
+  auto ustr = GetDisplayNameFunc(carcass);
+  return ustr ? ustr->ToString() : "Carcass";
 }
 
 Unity::Vector3 GetGearItemWorldPosition(Unity::CComponent *gearItem) {
@@ -438,6 +486,36 @@ void DrawESP() {
       draw->AddText(ImVec2(screenPos.x, y), IM_COL32(255, 255, 100, 255), textBuf);
     }
   }
+
+  if (g_ShowCarcassESP) {
+    std::lock_guard<std::mutex> lock(g_CarcassMutex);
+    for (auto &carcass : g_CarcassList) {
+      if (carcass.pHidden && *carcass.pHidden) continue;
+      if (!carcass.transform) continue;
+
+      Unity::Vector3 worldPos = Transform_get_position(carcass.transform);
+
+      Unity::Vector3 dir = { worldPos.x - camera_position.x, worldPos.y - camera_position.y, worldPos.z - camera_position.z };
+      if ((dir.x * camera_forward.x + dir.y * camera_forward.y + dir.z * camera_forward.z) <= 0.0f)
+          continue;
+
+      float distSq = Vector3_DistanceSquared(camera_position, worldPos);
+      if (distSq > maxDistSq)
+          continue;
+
+      Unity::Vector3 screenPos = Camera_WorldToScreenPoint(
+          camera, worldPos, Unity::m_eCameraEye::m_eCameraEye_Center);
+      if (screenPos.z < 0.1f)
+        continue;
+
+      float dist = std::sqrtf(distSq);
+      float meatKg = *(float*)((uintptr_t)carcass.ptr + off_MeatAvailableKG);
+      sprintf_s(textBuf, "* [%.1fm.] %s (%.1fkg)", dist, carcass.name.c_str(), meatKg);
+
+      float y = io.DisplaySize.y - screenPos.y;
+      draw->AddText(ImVec2(screenPos.x, y), IM_COL32(255, 165, 0, 255), textBuf); // Orange for carcasses
+    }
+  }
 }
 
 HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
@@ -472,7 +550,7 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
   if (GetAsyncKeyState(VK_INSERT) & 1) {
     showMenu = !showMenu;
   }
-  g_DrawEsp = g_ShowBaseAiESP || g_ShowGearItemESP || g_ShowHarvestableESP;
+  g_DrawEsp = g_ShowBaseAiESP || g_ShowGearItemESP || g_ShowHarvestableESP || g_ShowCarcassESP;
 
   if (g_DrawEsp || showMenu) {
     ImGui_ImplDX11_NewFrame();
@@ -506,6 +584,13 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
       {
         std::lock_guard<std::mutex> lock(g_HarvestableMutex);
         ImGui::Text("Found %zu Harvestable", g_HarvestableList.size());
+      }
+
+      ImGui::Checkbox("Carcass ESP", &g_ShowCarcassESP);
+      ImGui::SetItemTooltip("Show locations of animal carcasses (harvestable bodies).");
+      {
+        std::lock_guard<std::mutex> lock(g_CarcassMutex);
+        ImGui::Text("Found %zu Carcass", g_CarcassList.size());
       }
 
       ImGui::SliderFloat("ESP Distance", &g_EspDistance, 10.0f, 1000.0f);
@@ -555,6 +640,7 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
       std::map<std::string, int> counts;
       { std::lock_guard<std::mutex> l1(g_GearItemMutex); for(auto& i : g_GearItemList) counts[i.name]++; }
       { std::lock_guard<std::mutex> l2(g_BaseAiMutex); for(auto& a : g_BaseAiList) counts[a.name]++; }
+      { std::lock_guard<std::mutex> l3(g_CarcassMutex); for(auto& c : g_CarcassList) counts[c.name]++; }
 
       std::vector<ItemCount> items;
       std::string filter(search); std::transform(filter.begin(), filter.end(), filter.begin(), ::tolower);
@@ -628,14 +714,15 @@ HRESULT WINAPI hkResizeBuffers(IDXGISwapChain *pSwapChain, UINT BufferCount,
   return hr;
 }
 
-bool InitBaseAiOffsets() {
+bool InitOffsets() {
   off_CurrentHP = IL2CPP::Class::Utils::GetFieldOffset("BaseAi", "m_CurrentHP");
   off_MaxHP = IL2CPP::Class::Utils::GetFieldOffset("BaseAi", "m_MaxHP");
   off_DisplayName =
       IL2CPP::Class::Utils::GetFieldOffset("BaseAi", "m_DisplayName");
+  off_MeatAvailableKG = IL2CPP::Class::Utils::GetFieldOffset("BodyHarvest", "m_MeatAvailableKG");
   off_Camera = IL2CPP::Class::Utils::GetFieldOffset("vp_FPSCamera", "m_Camera");
   return off_CurrentHP != -1 && off_MaxHP != -1 && off_DisplayName != -1 &&
-         off_Camera != -1;
+         off_MeatAvailableKG != -1 && off_Camera != -1;
 }
 
 DWORD WINAPI MainThread(LPVOID lpReserved) {
@@ -681,7 +768,7 @@ DWORD WINAPI MainThread(LPVOID lpReserved) {
   if (!IL2CPP::Initialize())
     return 1;
 
-  if (!InitBaseAiOffsets())
+  if (!InitOffsets())
     return 1;
 
   LoadConfig();
@@ -722,6 +809,18 @@ DWORD WINAPI MainThread(LPVOID lpReserved) {
   if (MH_OK !=
       MH_CreateHook(harvestableManagerRemovePtr, &hkHarvestableManagerRemove,
                     reinterpret_cast<void **>(&oHarvestableManagerRemove)))
+    return 1;
+
+  auto bodyHarvestManagerAddPtr =
+      IL2CPP::Class::Utils::GetMethodPointer("BodyHarvestManager", "AddBodyHarvest", 1);
+  if (MH_OK != MH_CreateHook(bodyHarvestManagerAddPtr, &hkBodyHarvestManagerAdd,
+                             reinterpret_cast<void **>(&oBodyHarvestManagerAdd)))
+    return 1;
+
+  auto bodyHarvestManagerRemovePtr =
+      IL2CPP::Class::Utils::GetMethodPointer("BodyHarvestManager", "Destroy", 1);
+  if (MH_OK != MH_CreateHook(bodyHarvestManagerRemovePtr, &hkBodyHarvestManagerRemove,
+                             reinterpret_cast<void **>(&oBodyHarvestManagerRemove)))
     return 1;
 
   GameManager_GetMainCamera = reinterpret_cast<void *(*)()>(
