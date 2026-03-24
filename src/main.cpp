@@ -42,7 +42,6 @@ HWND window = NULL;
 bool init = false;
 bool showMenu = true;
 std::atomic<bool> g_Running{true};
-uint32_t g_FrameCount = 0;
 
 // Hack settings
 bool g_DrawEsp = false;
@@ -115,7 +114,6 @@ struct CachedESPItem {
   void* transform; // Cached transform pointer
   std::string name;
   bool* pHidden;   // Pointer to visibility state in g_ItemHidden for O(1) lookup
-  Unity::Vector3 lastPosition;
 };
 
 std::vector<CachedESPItem> g_BaseAiList;
@@ -168,10 +166,9 @@ void hkBaseAiManagerAdd(void *__this) {
 
   std::string name = GetDisplayName(__this);
   void* transform = Component_get_transform(__this);
-  Unity::Vector3 pos = Transform_get_position(transform);
 
   std::lock_guard<std::mutex> lock(g_BaseAiMutex);
-  g_BaseAiList.push_back({__this, transform, name, &g_ItemHidden[name], pos});
+  g_BaseAiList.push_back({__this, transform, name, &g_ItemHidden[name]});
 }
 
 using tBaseAiManagerRemove = void (*)(void *);
@@ -200,10 +197,9 @@ void hkGearManagerAdd(void *__this) {
 
   std::string name = GetGearItemDisplayName(__this);
   void* transform = Component_get_transform(__this);
-  Unity::Vector3 pos = Transform_get_position(transform);
 
   std::lock_guard<std::mutex> lock(g_GearItemMutex);
-  g_GearItemList.push_back({__this, transform, name, &g_ItemHidden[name], pos});
+  g_GearItemList.push_back({__this, transform, name, &g_ItemHidden[name]});
 }
 
 using tGearManagerRemove = void (*)(void *);
@@ -231,10 +227,9 @@ void hkHarvestableManagerAdd(void *__this) {
   oHarvestableManagerAdd(__this);
 
   void* transform = Component_get_transform(__this);
-  Unity::Vector3 pos = Transform_get_position(transform);
 
   std::lock_guard<std::mutex> lock(g_HarvestableMutex);
-  g_HarvestableList.push_back({__this, transform, "", nullptr, pos}); // Name not used for harvestables yet
+  g_HarvestableList.push_back({__this, transform, "", nullptr}); // Name not used for harvestables yet
 }
 
 using tHarvestableManagerRemove = void (*)(void *);
@@ -347,19 +342,19 @@ void DrawESP() {
       if (!ai.transform) continue;
 
       // Update position every frame for AI
-      ai.lastPosition = Transform_get_position(ai.transform);
+      Unity::Vector3 worldPos = Transform_get_position(ai.transform);
 
       // Fast plane culling
-      Unity::Vector3 dir = { ai.lastPosition.x - camera_position.x, ai.lastPosition.y - camera_position.y, ai.lastPosition.z - camera_position.z };
+      Unity::Vector3 dir = { worldPos.x - camera_position.x, worldPos.y - camera_position.y, worldPos.z - camera_position.z };
       if ((dir.x * camera_forward.x + dir.y * camera_forward.y + dir.z * camera_forward.z) <= 0.0f)
           continue;
 
-      float distSq = Vector3_DistanceSquared(camera_position, ai.lastPosition);
+      float distSq = Vector3_DistanceSquared(camera_position, worldPos);
       if (distSq > maxDistSq)
           continue;
 
       Unity::Vector3 screenPos = Camera_WorldToScreenPoint(
-          camera, ai.lastPosition, Unity::m_eCameraEye::m_eCameraEye_Center);
+          camera, worldPos, Unity::m_eCameraEye::m_eCameraEye_Center);
 
       if (screenPos.z < 0.1f)
         continue;
@@ -390,19 +385,19 @@ void DrawESP() {
       if (!item.transform) continue;
 
       // Update position every frame
-      item.lastPosition = Transform_get_position(item.transform);
+      Unity::Vector3 worldPos = Transform_get_position(item.transform);
 
       // Fast plane culling
-      Unity::Vector3 dir = { item.lastPosition.x - camera_position.x, item.lastPosition.y - camera_position.y, item.lastPosition.z - camera_position.z };
+      Unity::Vector3 dir = { worldPos.x - camera_position.x, worldPos.y - camera_position.y, worldPos.z - camera_position.z };
       if ((dir.x * camera_forward.x + dir.y * camera_forward.y + dir.z * camera_forward.z) <= 0.0f)
           continue;
 
-      float distSq = Vector3_DistanceSquared(camera_position, item.lastPosition);
+      float distSq = Vector3_DistanceSquared(camera_position, worldPos);
       if (distSq > maxDistSq)
           continue;
 
       Unity::Vector3 screenPos = Camera_WorldToScreenPoint(
-          camera, item.lastPosition, Unity::m_eCameraEye::m_eCameraEye_Center);
+          camera, worldPos, Unity::m_eCameraEye::m_eCameraEye_Center);
       if (screenPos.z < 0.1f)
         continue;
 
@@ -420,19 +415,19 @@ void DrawESP() {
       if (!harvestable.transform) continue;
 
       // Update position every frame
-      harvestable.lastPosition = Transform_get_position(harvestable.transform);
+      Unity::Vector3 worldPos = Transform_get_position(harvestable.transform);
 
       // Fast plane culling
-      Unity::Vector3 dir = { harvestable.lastPosition.x - camera_position.x, harvestable.lastPosition.y - camera_position.y, harvestable.lastPosition.z - camera_position.z };
+      Unity::Vector3 dir = { worldPos.x - camera_position.x, worldPos.y - camera_position.y, worldPos.z - camera_position.z };
       if ((dir.x * camera_forward.x + dir.y * camera_forward.y + dir.z * camera_forward.z) <= 0.0f)
           continue;
 
-      float distSq = Vector3_DistanceSquared(camera_position, harvestable.lastPosition);
+      float distSq = Vector3_DistanceSquared(camera_position, worldPos);
       if (distSq > maxDistSq)
           continue;
 
       Unity::Vector3 screenPos = Camera_WorldToScreenPoint(
-          camera, harvestable.lastPosition, Unity::m_eCameraEye::m_eCameraEye_Center);
+          camera, worldPos, Unity::m_eCameraEye::m_eCameraEye_Center);
       if (screenPos.z < 0.1f)
         continue;
 
@@ -447,7 +442,6 @@ void DrawESP() {
 
 HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
                          UINT Flags) {
-  g_FrameCount++;
   if (!init) {
     if (SUCCEEDED(
             pSwapChain->GetDevice(__uuidof(ID3D11Device), (void **)&pDevice))) {
