@@ -17,6 +17,11 @@
 #include <string>
 #include <vector>
 #include <cstdarg>
+#include <cstdio>
+#include <fstream>
+
+static void* g_LastCamera = nullptr;
+static void* g_CachedCameraTransform = nullptr;
 
 void DebugLog(const char* format, ...) {
     char buf[1024];
@@ -25,6 +30,16 @@ void DebugLog(const char* format, ...) {
     vsnprintf(buf, sizeof(buf), format, args);
     va_end(args);
     OutputDebugStringA(buf);
+
+    char path[MAX_PATH] = { 0 };
+    if (GetModuleFileNameA(NULL, path, MAX_PATH)) {
+        std::string exePath(path);
+        std::string logPath = exePath.substr(0, exePath.find_last_of("\\/")) + "\\fubuki_esp.log";
+        std::ofstream logFile(logPath, std::ios_base::app);
+        if (logFile.is_open()) {
+            logFile << buf;
+        }
+    }
 }
 
 // Tyedefs for hooked functions
@@ -313,6 +328,8 @@ void hkGameManagerLoadMainMenu() {
     std::lock_guard<std::mutex> lock(g_HarvestableMutex);
     g_HarvestableList.clear();
   }
+  g_LastCamera = nullptr;
+  g_CachedCameraTransform = nullptr;
   oGameManagerLoadMainMenu();
 }
 
@@ -363,27 +380,27 @@ Unity::Vector3 GetWorldPosition(Unity::CComponent *ai) {
 }
 
 Unity::Vector3 GetCameraPosition(void *camera) {
-  static void* lastCamera = nullptr;
-  static void* cachedTransform = nullptr;
+  if (camera == nullptr) return {-9999.0f, -9999.0f, -9999.0f};
 
-  if (camera != lastCamera) {
-    lastCamera = camera;
-    cachedTransform = Component_get_transform(camera);
+  if (camera != g_LastCamera) {
+    g_LastCamera = camera;
+    g_CachedCameraTransform = Component_get_transform(camera);
   }
 
-  return Transform_get_position(cachedTransform);
+  if (g_CachedCameraTransform == nullptr) return {-9999.0f, -9999.0f, -9999.0f};
+  return Transform_get_position(g_CachedCameraTransform);
 }
 
 Unity::Vector3 GetCameraForward(void *camera) {
-  static void* lastCamera = nullptr;
-  static void* cachedTransform = nullptr;
+  if (camera == nullptr) return {0.0f, 0.0f, 1.0f};
 
-  if (camera != lastCamera) {
-    lastCamera = camera;
-    cachedTransform = Component_get_transform(camera);
+  if (camera != g_LastCamera) {
+    g_LastCamera = camera;
+    g_CachedCameraTransform = Component_get_transform(camera);
   }
 
-  return Transform_get_forward(cachedTransform);
+  if (g_CachedCameraTransform == nullptr) return {0.0f, 0.0f, 1.0f};
+  return Transform_get_forward(g_CachedCameraTransform);
 }
 
 void DrawESP() {
@@ -394,9 +411,12 @@ void DrawESP() {
   if (camera == nullptr)
       return;
 
+  // DebugLog("[Fubuki-ESP] DrawESP: Camera is valid at %p\n", camera);
+
   ImDrawList *draw = ImGui::GetBackgroundDrawList();
   ImGuiIO &io = ImGui::GetIO();
   Unity::Vector3 camera_position = GetCameraPosition(camera);
+  if (camera_position.x == -9999.0f) return;
   Unity::Vector3 camera_forward = GetCameraForward(camera);
   float maxDistSq = g_EspDistance * g_EspDistance;
   char textBuf[256];
@@ -405,14 +425,7 @@ void DrawESP() {
     std::lock_guard<std::mutex> lock(g_BaseAiMutex);
     for (auto &ai : g_BaseAiList) {
       if (ai.pHidden && *ai.pHidden) continue;
-      if (!ai.ptr) {
-          DebugLog("[Fubuki-ESP] Error: BaseAi item has null ptr.\n");
-          continue;
-      }
-      if (!ai.transform) {
-          DebugLog("[Fubuki-ESP] Error: BaseAi item '%s' has null transform.\n", ai.name.c_str());
-          continue;
-      }
+      if (!ai.ptr || !ai.transform) continue;
 
       // Update position every frame for AI
       Unity::Vector3 worldPos = Transform_get_position(ai.transform);
@@ -456,14 +469,7 @@ void DrawESP() {
     std::lock_guard<std::mutex> lock(g_GearItemMutex);
     for (auto &item : g_GearItemList) {
       if (item.pHidden && *item.pHidden) continue;
-      if (!item.ptr) {
-          DebugLog("[Fubuki-ESP] Error: GearItem has null ptr.\n");
-          continue;
-      }
-      if (!item.transform) {
-          DebugLog("[Fubuki-ESP] Error: GearItem '%s' has null transform.\n", item.name.c_str());
-          continue;
-      }
+      if (!item.ptr || !item.transform) continue;
 
       // Update position every frame
       Unity::Vector3 worldPos = Transform_get_position(item.transform);
@@ -494,14 +500,7 @@ void DrawESP() {
   if (g_ShowHarvestableESP) {
     std::lock_guard<std::mutex> lock(g_HarvestableMutex);
     for (auto &harvestable : g_HarvestableList) {
-      if (!harvestable.ptr) {
-          DebugLog("[Fubuki-ESP] Error: Harvestable has null ptr.\n");
-          continue;
-      }
-      if (!harvestable.transform) {
-          DebugLog("[Fubuki-ESP] Error: Harvestable has null transform.\n");
-          continue;
-      }
+      if (!harvestable.ptr || !harvestable.transform) continue;
 
       // Update position every frame
       Unity::Vector3 worldPos = Transform_get_position(harvestable.transform);
