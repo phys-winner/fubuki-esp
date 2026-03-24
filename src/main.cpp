@@ -389,9 +389,8 @@ void DrawESP() {
       if (item.pHidden && *item.pHidden) continue;
       if (!item.transform) continue;
 
-      // Staggered refresh: only every 60 frames for items
-      if ((g_FrameCount + (uintptr_t)item.ptr) % 60 == 0)
-          item.lastPosition = Transform_get_position(item.transform);
+      // Update position every frame
+      item.lastPosition = Transform_get_position(item.transform);
 
       // Fast plane culling
       Unity::Vector3 dir = { item.lastPosition.x - camera_position.x, item.lastPosition.y - camera_position.y, item.lastPosition.z - camera_position.z };
@@ -420,9 +419,8 @@ void DrawESP() {
     for (auto &harvestable : g_HarvestableList) {
       if (!harvestable.transform) continue;
 
-      // Staggered refresh: only every 180 frames for harvestables
-      if ((g_FrameCount + (uintptr_t)harvestable.ptr) % 180 == 0)
-          harvestable.lastPosition = Transform_get_position(harvestable.transform);
+      // Update position every frame
+      harvestable.lastPosition = Transform_get_position(harvestable.transform);
 
       // Fast plane culling
       Unity::Vector3 dir = { harvestable.lastPosition.x - camera_position.x, harvestable.lastPosition.y - camera_position.y, harvestable.lastPosition.z - camera_position.z };
