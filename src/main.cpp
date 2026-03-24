@@ -16,6 +16,16 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <cstdarg>
+
+void DebugLog(const char* format, ...) {
+    char buf[1024];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(buf, sizeof(buf), format, args);
+    va_end(args);
+    OutputDebugStringA(buf);
+}
 
 // Tyedefs for hooked functions
 typedef HRESULT(WINAPI *Present)(IDXGISwapChain *pSwapChain, UINT SyncInterval,
@@ -250,6 +260,62 @@ void hkHarvestableManagerRemove(void *__this) {
   oHarvestableManagerRemove(__this);
 }
 
+using tBaseAiManagerReset = void (*)();
+tBaseAiManagerReset oBaseAiManagerReset = nullptr;
+
+void hkBaseAiManagerReset() {
+  DebugLog("[Fubuki-ESP] BaseAiManager::Reset called. Clearing list.\n");
+  {
+    std::lock_guard<std::mutex> lock(g_BaseAiMutex);
+    g_BaseAiList.clear();
+  }
+  oBaseAiManagerReset();
+}
+
+using tGearManagerReset = void (*)();
+tGearManagerReset oGearManagerReset = nullptr;
+
+void hkGearManagerReset() {
+  DebugLog("[Fubuki-ESP] GearManager::Reset called. Clearing list.\n");
+  {
+    std::lock_guard<std::mutex> lock(g_GearItemMutex);
+    g_GearItemList.clear();
+  }
+  oGearManagerReset();
+}
+
+using tHarvestableManagerReset = void (*)();
+tHarvestableManagerReset oHarvestableManagerReset = nullptr;
+
+void hkHarvestableManagerReset() {
+  DebugLog("[Fubuki-ESP] HarvestableManager::Reset called. Clearing list.\n");
+  {
+    std::lock_guard<std::mutex> lock(g_HarvestableMutex);
+    g_HarvestableList.clear();
+  }
+  oHarvestableManagerReset();
+}
+
+using tGameManagerLoadMainMenu = void (*)();
+tGameManagerLoadMainMenu oGameManagerLoadMainMenu = nullptr;
+
+void hkGameManagerLoadMainMenu() {
+  DebugLog("[Fubuki-ESP] GameManager::LoadMainMenu called. Clearing all lists.\n");
+  {
+    std::lock_guard<std::mutex> lock(g_BaseAiMutex);
+    g_BaseAiList.clear();
+  }
+  {
+    std::lock_guard<std::mutex> lock(g_GearItemMutex);
+    g_GearItemList.clear();
+  }
+  {
+    std::lock_guard<std::mutex> lock(g_HarvestableMutex);
+    g_HarvestableList.clear();
+  }
+  oGameManagerLoadMainMenu();
+}
+
 float GetCurrentHP(void *ai) {
   return *(float *)((uintptr_t)ai + off_CurrentHP);
 }
@@ -339,10 +405,18 @@ void DrawESP() {
     std::lock_guard<std::mutex> lock(g_BaseAiMutex);
     for (auto &ai : g_BaseAiList) {
       if (ai.pHidden && *ai.pHidden) continue;
-      if (!ai.transform) continue;
+      if (!ai.ptr) {
+          DebugLog("[Fubuki-ESP] Error: BaseAi item has null ptr.\n");
+          continue;
+      }
+      if (!ai.transform) {
+          DebugLog("[Fubuki-ESP] Error: BaseAi item '%s' has null transform.\n", ai.name.c_str());
+          continue;
+      }
 
       // Update position every frame for AI
       Unity::Vector3 worldPos = Transform_get_position(ai.transform);
+      if (worldPos.x == -9999.0f) continue; // Safety check if Transform_get_position is hooked/modified to return sentinel
 
       // Fast plane culling
       Unity::Vector3 dir = { worldPos.x - camera_position.x, worldPos.y - camera_position.y, worldPos.z - camera_position.z };
@@ -382,10 +456,18 @@ void DrawESP() {
     std::lock_guard<std::mutex> lock(g_GearItemMutex);
     for (auto &item : g_GearItemList) {
       if (item.pHidden && *item.pHidden) continue;
-      if (!item.transform) continue;
+      if (!item.ptr) {
+          DebugLog("[Fubuki-ESP] Error: GearItem has null ptr.\n");
+          continue;
+      }
+      if (!item.transform) {
+          DebugLog("[Fubuki-ESP] Error: GearItem '%s' has null transform.\n", item.name.c_str());
+          continue;
+      }
 
       // Update position every frame
       Unity::Vector3 worldPos = Transform_get_position(item.transform);
+      if (worldPos.x == -9999.0f) continue;
 
       // Fast plane culling
       Unity::Vector3 dir = { worldPos.x - camera_position.x, worldPos.y - camera_position.y, worldPos.z - camera_position.z };
@@ -412,10 +494,18 @@ void DrawESP() {
   if (g_ShowHarvestableESP) {
     std::lock_guard<std::mutex> lock(g_HarvestableMutex);
     for (auto &harvestable : g_HarvestableList) {
-      if (!harvestable.transform) continue;
+      if (!harvestable.ptr) {
+          DebugLog("[Fubuki-ESP] Error: Harvestable has null ptr.\n");
+          continue;
+      }
+      if (!harvestable.transform) {
+          DebugLog("[Fubuki-ESP] Error: Harvestable has null transform.\n");
+          continue;
+      }
 
       // Update position every frame
       Unity::Vector3 worldPos = Transform_get_position(harvestable.transform);
+      if (worldPos.x == -9999.0f) continue;
 
       // Fast plane culling
       Unity::Vector3 dir = { worldPos.x - camera_position.x, worldPos.y - camera_position.y, worldPos.z - camera_position.z };
@@ -668,60 +758,106 @@ DWORD WINAPI MainThread(LPVOID lpReserved) {
   void *pPresent = pVTable[8];
   void *pResizeBuffers = pVTable[13];
 
-  if (MH_Initialize() != MH_OK)
+  if (MH_Initialize() != MH_OK) {
+    DebugLog("[Fubuki-ESP] Failed to initialize MinHook.\n");
     return 1;
+  }
 
   if (MH_OK !=
-      MH_CreateHook(pPresent, &hkPresent, reinterpret_cast<void **>(&oPresent)))
+      MH_CreateHook(pPresent, &hkPresent, reinterpret_cast<void **>(&oPresent))) {
+    DebugLog("[Fubuki-ESP] Failed to hook Present.\n");
     return 1;
+  }
 
   if (MH_OK != MH_CreateHook(pResizeBuffers, &hkResizeBuffers,
-                             reinterpret_cast<void **>(&oResizeBuffers)))
+                             reinterpret_cast<void **>(&oResizeBuffers))) {
+    DebugLog("[Fubuki-ESP] Failed to hook ResizeBuffers.\n");
     return 1;
-  if (!IL2CPP::Initialize())
+  }
+  if (!IL2CPP::Initialize()) {
+    DebugLog("[Fubuki-ESP] Failed to initialize IL2CPP Resolver.\n");
     return 1;
+  }
 
-  if (!InitBaseAiOffsets())
+  if (!InitBaseAiOffsets()) {
+    DebugLog("[Fubuki-ESP] Failed to initialize BaseAi offsets.\n");
     return 1;
+  }
 
   LoadConfig();
 
   auto gearManagerAddPtr =
       IL2CPP::Class::Utils::GetMethodPointer("GearManager", "Add", 1);
   if (MH_OK != MH_CreateHook(gearManagerAddPtr, &hkGearManagerAdd,
-                             reinterpret_cast<void **>(&oGearManagerAdd)))
+                             reinterpret_cast<void **>(&oGearManagerAdd))) {
+    DebugLog("[Fubuki-ESP] Failed to hook GearManager::Add.\n");
     return 1;
+  }
 
   auto gearManagerRemovePtr =
       IL2CPP::Class::Utils::GetMethodPointer("GearManager", "Remove", 1);
   if (MH_OK != MH_CreateHook(gearManagerRemovePtr, &hkGearManagerRemove,
-                             reinterpret_cast<void **>(&oGearManagerRemove)))
+                             reinterpret_cast<void **>(&oGearManagerRemove))) {
+    DebugLog("[Fubuki-ESP] Failed to hook GearManager::Remove.\n");
     return 1;
+  }
 
   auto baseAiManagerAddPtr =
       IL2CPP::Class::Utils::GetMethodPointer("BaseAiManager", "Add", 1);
   if (MH_OK != MH_CreateHook(baseAiManagerAddPtr, &hkBaseAiManagerAdd,
-                             reinterpret_cast<void **>(&oBaseAiManagerAdd)))
+                             reinterpret_cast<void **>(&oBaseAiManagerAdd))) {
+    DebugLog("[Fubuki-ESP] Failed to hook BaseAiManager::Add.\n");
     return 1;
+  }
 
   auto baseAiManagerRemovePtr =
       IL2CPP::Class::Utils::GetMethodPointer("BaseAiManager", "Remove", 1);
   if (MH_OK != MH_CreateHook(baseAiManagerRemovePtr, &hkBaseAiManagerRemove,
-                             reinterpret_cast<void **>(&oBaseAiManagerRemove)))
+                             reinterpret_cast<void **>(&oBaseAiManagerRemove))) {
+    DebugLog("[Fubuki-ESP] Failed to hook BaseAiManager::Remove.\n");
     return 1;
+  }
 
   auto harvestableManagerAddPtr =
       IL2CPP::Class::Utils::GetMethodPointer("HarvestableManager", "Add", 1);
   if (MH_OK !=
       MH_CreateHook(harvestableManagerAddPtr, &hkHarvestableManagerAdd,
-                    reinterpret_cast<void **>(&oHarvestableManagerAdd)))
+                    reinterpret_cast<void **>(&oHarvestableManagerAdd))) {
+    DebugLog("[Fubuki-ESP] Failed to hook HarvestableManager::Add.\n");
     return 1;
+  }
 
   auto harvestableManagerRemovePtr =
       IL2CPP::Class::Utils::GetMethodPointer("HarvestableManager", "Remove", 1);
   if (MH_OK !=
       MH_CreateHook(harvestableManagerRemovePtr, &hkHarvestableManagerRemove,
-                    reinterpret_cast<void **>(&oHarvestableManagerRemove)))
+                    reinterpret_cast<void **>(&oHarvestableManagerRemove))) {
+    DebugLog("[Fubuki-ESP] Failed to hook HarvestableManager::Remove.\n");
+    return 1;
+  }
+
+  auto baseAiManagerResetPtr =
+      IL2CPP::Class::Utils::GetMethodPointer("BaseAiManager", "Reset", 0);
+  if (baseAiManagerResetPtr && MH_OK != MH_CreateHook(baseAiManagerResetPtr, &hkBaseAiManagerReset,
+                             reinterpret_cast<void **>(&oBaseAiManagerReset)))
+    return 1;
+
+  auto gearManagerResetPtr =
+      IL2CPP::Class::Utils::GetMethodPointer("GearManager", "Reset", 0);
+  if (gearManagerResetPtr && MH_OK != MH_CreateHook(gearManagerResetPtr, &hkGearManagerReset,
+                             reinterpret_cast<void **>(&oGearManagerReset)))
+    return 1;
+
+  auto harvestableManagerResetPtr =
+      IL2CPP::Class::Utils::GetMethodPointer("HarvestableManager", "Reset", 0);
+  if (harvestableManagerResetPtr && MH_OK != MH_CreateHook(harvestableManagerResetPtr, &hkHarvestableManagerReset,
+                             reinterpret_cast<void **>(&oHarvestableManagerReset)))
+    return 1;
+
+  auto gameManagerLoadMainMenuPtr =
+      IL2CPP::Class::Utils::GetMethodPointer("GameManager", "LoadMainMenu", 0);
+  if (gameManagerLoadMainMenuPtr && MH_OK != MH_CreateHook(gameManagerLoadMainMenuPtr, &hkGameManagerLoadMainMenu,
+                             reinterpret_cast<void **>(&oGameManagerLoadMainMenu)))
     return 1;
 
   GameManager_GetMainCamera = reinterpret_cast<void *(*)()>(
@@ -751,8 +887,10 @@ DWORD WINAPI MainThread(LPVOID lpReserved) {
   GearItem_get_DisplayNameWithCondition = reinterpret_cast<Unity::System_String * (*)(void *)>(
       IL2CPP::Class::Utils::GetMethodPointer("GearItem", "get_DisplayNameWithCondition", 0));
 
-  if (MH_OK != MH_EnableHook(MH_ALL_HOOKS))
+  if (MH_OK != MH_EnableHook(MH_ALL_HOOKS)) {
+    DebugLog("[Fubuki-ESP] Failed to enable all hooks.\n");
     return 1;
+  }
 
   pDummySwapChain->Release();
   pDummyDevice->Release();
