@@ -495,11 +495,11 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
           g_Running = false;
           ImGui::CloseCurrentPopup();
         }
-        ImGui::SetItemDefaultFocus();
         ImGui::SameLine();
         if (ImGui::Button("Cancel", ImVec2(120, 0))) {
           ImGui::CloseCurrentPopup();
         }
+        ImGui::SetItemDefaultFocus();
         ImGui::EndPopup();
       }
       ImGui::End();
@@ -510,7 +510,8 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
       ImGui::SetWindowSize(ImVec2(300, 600), ImGuiCond_FirstUseEver);
 
       static char search[64] = "";
-      ImGui::InputText("Filter", search, IM_ARRAYSIZE(search));
+      ImGui::Text("Filter:"); ImGui::SameLine();
+      ImGui::InputTextWithHint("##filter", "Search items...", search, IM_ARRAYSIZE(search));
 
       static int sortType = 0; static bool sortAsc = true;
       ImGui::RadioButton("Name", &sortType, 0); ImGui::SameLine();
@@ -535,7 +536,20 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
           return (a.count == b.count) ? (sortAsc ? a.name < b.name : a.name > b.name) : (sortAsc ? a.count < b.count : a.count > b.count);
       });
 
+      if (ImGui::Button("Show All")) {
+          for (const auto& item : items) g_ItemHidden[item.name] = false;
+          SaveConfig();
+      }
+      ImGui::SameLine();
+      if (ImGui::Button("Hide All")) {
+          for (const auto& item : items) g_ItemHidden[item.name] = true;
+          SaveConfig();
+      }
+
       if (ImGui::BeginChild("##scrolly", ImVec2(0, 0), true)) {
+          if (items.empty()) {
+              ImGui::TextDisabled("No items matching filter.");
+          }
           for(auto& item : items) {
               bool checked = item.visible;
               if (ImGui::Checkbox(("[ " + std::to_string(item.count) + " ] " + item.name + "##" + item.name).c_str(), &checked)) {

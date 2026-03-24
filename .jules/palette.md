@@ -9,3 +9,7 @@
 ## 2025-05-23 - [Accidental Action Prevention & Discoverability]
 **Learning:** Destructive or irreversible actions (like unloading a DLL) require a confirmation barrier to prevent accidental clicks. Additionally, domain-specific terminology (e.g., "BaseAi") benefits significantly from contextual tooltips to improve accessibility for new users.
 **Action:** Implement modal popups for "Unload/Exit" actions and use `ImGui::SetItemTooltip` for technical feature toggles.
+
+## 2025-05-24 - [Filtering & Safety Design Patterns]
+**Learning:** For destructive modals, setting default focus to the "Cancel" button using `ImGui::SetItemDefaultFocus()` prevents accidental confirmation. In search filters, `ImGui::InputTextWithHint` improves clarity, while bulk actions (Show/Hide All) that target only the filtered subset enhance user efficiency. Providing explicit empty state messages (e.g., "No items matching filter") reduces user confusion.
+**Action:** Prioritize safety-first button focus, use hints in text inputs, and implement bulk actions on filtered subsets to improve UX flow.
