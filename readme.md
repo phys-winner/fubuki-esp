@@ -59,6 +59,9 @@ To build the project from source:
 - Compatibility with DLC (Wintermute).
 - Automatic intro and loading screen skipping.
 
+## References
+- [SkipIntro by zorgesho](https://github.com/zorgesho/TheLongDarkMods/tree/master/SkipIntro) - Used for intro and menu transition logic.
+
 ## Contributors
 - **Antigravity** (Lead Developer/AI Assistant)
 
