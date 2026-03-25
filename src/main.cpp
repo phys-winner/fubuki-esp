@@ -109,6 +109,8 @@ static Unity::Vector3 (*Transform_get_position)(void *_this);
 static Unity::Vector3 (*Transform_get_forward)(void *_this);
 static Unity::System_String *(*GearItem_get_DisplayNameWithCondition)(
     void *_this);
+static bool (*InterfaceManager_IsOverlayActiveImmediate)();
+static bool (*InterfaceManager_IsMainMenuEnabled)();
 
 struct CachedESPItem {
   void* ptr;
@@ -370,6 +372,12 @@ Unity::Vector3 GetCameraForward(void *camera) {
 
 void DrawESP() {
   if (!g_DrawEsp)
+    return;
+
+  if (InterfaceManager_IsOverlayActiveImmediate && InterfaceManager_IsOverlayActiveImmediate())
+    return;
+
+  if (InterfaceManager_IsMainMenuEnabled && InterfaceManager_IsMainMenuEnabled())
     return;
 
   auto camera = GameManager_GetMainCamera();
@@ -849,6 +857,12 @@ DWORD WINAPI MainThread(LPVOID lpReserved) {
 
   GearItem_get_DisplayNameWithCondition = reinterpret_cast<Unity::System_String * (*)(void *)>(
       IL2CPP::Class::Utils::GetMethodPointer("GearItem", "get_DisplayNameWithCondition", 0));
+
+  InterfaceManager_IsOverlayActiveImmediate = reinterpret_cast<bool (*)()>(
+      IL2CPP::Class::Utils::GetMethodPointer("InterfaceManager", "IsOverlayActiveImmediate", 0));
+
+  InterfaceManager_IsMainMenuEnabled = reinterpret_cast<bool (*)()>(
+      IL2CPP::Class::Utils::GetMethodPointer("InterfaceManager", "IsMainMenuEnabled", 0));
 
   if (MH_OK != MH_EnableHook(MH_ALL_HOOKS))
     return 1;
