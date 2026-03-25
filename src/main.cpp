@@ -102,9 +102,6 @@ static Unity::Vector3 (*Camera_WorldToScreenPoint)(void *camera,
                                                    Unity::Vector3 position,
                                                    int eye);
 static void *(*Component_get_transform)(void *_this);
-static void *(*Component_get_gameObject)(void *_this);
-static void *(*GameObject_get_transform)(void *_this);
-static bool (*GameObject_get_activeInHierarchy)(void *_this);
 static Unity::Vector3 (*Transform_get_position)(void *_this);
 static Unity::Vector3 (*Transform_get_forward)(void *_this);
 static Unity::System_String *(*GearItem_get_DisplayNameWithCondition)(
@@ -132,7 +129,6 @@ uintptr_t off_CurrentHP;
 uintptr_t off_MaxHP;
 uintptr_t off_DisplayName;
 uintptr_t off_MeatAvailableKG;
-uintptr_t off_Camera;
 
 uintptr_t off_PanelMainMenu_StartFadedOut = 0;
 uintptr_t off_PanelMainMenu_InitialScreenFadeInDuration = 0;
@@ -197,10 +193,6 @@ float Vector3_DistanceSquared(const Unity::Vector3 &v1, const Unity::Vector3 &v2
   float deltaY = v1.y - v2.y;
   float deltaZ = v1.z - v2.z;
   return deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ;
-}
-
-float Vector3_Distance(const Unity::Vector3 &v1, const Unity::Vector3 &v2) {
-  return std::sqrtf(Vector3_DistanceSquared(v1, v2));
 }
 
 // Forward declarations
@@ -352,10 +344,6 @@ float GetCurrentHP(void *ai) {
 
 float GetMaxHP(void *ai) { return *(float *)((uintptr_t)ai + off_MaxHP); }
 
-void *vp_FPSCamera_GetCamera(void *vp_FPSCamera) {
-  return *(void **)((uintptr_t)vp_FPSCamera + off_Camera);
-}
-
 std::string GetDisplayName(void *ai) {
   auto ustr = *(Unity::System_String **)((uintptr_t)ai + off_DisplayName);
   return ustr ? ustr->ToString() : "Unknown";
@@ -376,32 +364,6 @@ std::string GetCarcassDisplayName(void *carcass) {
   if (!GetDisplayNameFunc) return "Carcass";
   auto ustr = GetDisplayNameFunc(carcass);
   return ustr ? ustr->ToString() : "Carcass";
-}
-
-Unity::Vector3 GetGearItemWorldPosition(Unity::CComponent *gearItem) {
-  if (gearItem == nullptr) {
-    return {-9999.0f, -9999.0f, -9999.0f};
-  }
-  auto gameObject = Component_get_gameObject(gearItem);
-  if (gameObject == nullptr) {
-    return {-9999.0f, -9999.0f, -9999.0f};
-  }
-
-  if (!GameObject_get_activeInHierarchy(gameObject)) {
-    return {-9999.0f, -9999.0f, -9999.0f};
-  }
-
-  auto transform = GameObject_get_transform(gameObject);
-  auto pos = Transform_get_position(transform);
-
-  return pos;
-}
-
-Unity::Vector3 GetWorldPosition(Unity::CComponent *ai) {
-  auto transform = Component_get_transform(ai);
-  auto pos = Transform_get_position(transform);
-
-  return pos;
 }
 
 Unity::Vector3 GetCameraPosition(void *camera) {
@@ -806,7 +768,6 @@ bool InitOffsets() {
   off_DisplayName =
       IL2CPP::Class::Utils::GetFieldOffset("BaseAi", "m_DisplayName");
   off_MeatAvailableKG = IL2CPP::Class::Utils::GetFieldOffset("BodyHarvest", "m_MeatAvailableKG");
-  off_Camera = IL2CPP::Class::Utils::GetFieldOffset("vp_FPSCamera", "m_Camera");
 
   // Skip Fade Offsets
   off_PanelMainMenu_StartFadedOut = IL2CPP::Class::Utils::GetFieldOffset("Panel_MainMenu", "m_StartFadedOut");
@@ -819,7 +780,7 @@ bool InitOffsets() {
   }
 
   return off_CurrentHP != -1 && off_MaxHP != -1 && off_DisplayName != -1 &&
-         off_MeatAvailableKG != -1 && off_Camera != -1;
+         off_MeatAvailableKG != -1;
 }
 
 DWORD WINAPI MainThread(LPVOID lpReserved) {
@@ -944,15 +905,6 @@ DWORD WINAPI MainThread(LPVOID lpReserved) {
 
   Component_get_transform = reinterpret_cast<void *(*)(void *)>(
       IL2CPP::Class::Utils::GetMethodPointer("UnityEngine.Component", "get_transform", 0));
-
-  Component_get_gameObject = reinterpret_cast<void *(*)(void *)>(
-      IL2CPP::Class::Utils::GetMethodPointer("UnityEngine.Component", "get_gameObject", 0));
-
-  GameObject_get_transform = reinterpret_cast<void *(*)(void *)>(
-      IL2CPP::Class::Utils::GetMethodPointer("UnityEngine.GameObject", "get_transform", 0));
-
-  GameObject_get_activeInHierarchy = reinterpret_cast<bool (*)(void *)>(
-      IL2CPP::Class::Utils::GetMethodPointer("UnityEngine.GameObject", "get_activeInHierarchy", 0));
 
   Transform_get_position = reinterpret_cast<Unity::Vector3 (*)(void *)>(
       IL2CPP::Class::Utils::GetMethodPointer("UnityEngine.Transform", "get_position", 0));
