@@ -563,30 +563,42 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
       ImGui::TextDisabled("Controls: [INS] Menu | [END] Unload");
       ImGui::Separator();
 
+      ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 100, 100, 255));
       ImGui::Checkbox("BaseAi ESP", &g_ShowBaseAiESP);
+      ImGui::PopStyleColor();
       ImGui::SetItemTooltip("Show locations of animals and other AI entities.");
-      ImGui::Checkbox("Show HP", &g_ShowBaseAiHP);
-      ImGui::Checkbox("Show Name", &g_ShowBaseAiName);
+      if (g_ShowBaseAiESP) {
+        ImGui::Indent();
+        ImGui::Checkbox("Show HP", &g_ShowBaseAiHP);
+        ImGui::Checkbox("Show Name", &g_ShowBaseAiName);
+        ImGui::Unindent();
+      }
       {
         std::lock_guard<std::mutex> lock(g_BaseAiMutex);
         ImGui::Text("Found %zu BaseAi", g_BaseAiList.size());
       }
 
+      ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 100, 255));
       ImGui::Checkbox("GearItem ESP", &g_ShowGearItemESP);
+      ImGui::PopStyleColor();
       ImGui::SetItemTooltip("Show locations of tools, food, and other resources.");
       {
         std::lock_guard<std::mutex> lock(g_GearItemMutex);
         ImGui::Text("Found %zu GearItem", g_GearItemList.size());
       }
 
+      ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 100, 255));
       ImGui::Checkbox("Harvestable ESP", &g_ShowHarvestableESP);
+      ImGui::PopStyleColor();
       ImGui::SetItemTooltip("Highlight plants and harvestable objects in the environment.");
       {
         std::lock_guard<std::mutex> lock(g_HarvestableMutex);
         ImGui::Text("Found %zu Harvestable", g_HarvestableList.size());
       }
 
+      ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 165, 0, 255));
       ImGui::Checkbox("Carcass ESP", &g_ShowCarcassESP);
+      ImGui::PopStyleColor();
       ImGui::SetItemTooltip("Show locations of animal carcasses (harvestable bodies).");
       {
         std::lock_guard<std::mutex> lock(g_CarcassMutex);
@@ -599,6 +611,7 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
       if (ImGui::Button("Visibility Menu", ImVec2(120, 0))) {
         g_ShowVisibilityMenu = !g_ShowVisibilityMenu;
       }
+      ImGui::SetItemTooltip("Open a detailed menu to toggle visibility for individual item types.");
       ImGui::SameLine();
       if (ImGui::Button("Unload DLL", ImVec2(120, 0))) {
         ImGui::OpenPopup("Confirm Unload");
@@ -630,6 +643,13 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
       static char search[64] = "";
       ImGui::Text("Filter:"); ImGui::SameLine();
       ImGui::InputTextWithHint("##filter", "Search items...", search, IM_ARRAYSIZE(search));
+      if (search[0] != '\0') {
+        ImGui::SameLine();
+        if (ImGui::Button("X")) {
+          search[0] = '\0';
+        }
+        ImGui::SetItemTooltip("Clear search filter");
+      }
 
       static int sortType = 0; static bool sortAsc = true;
       ImGui::RadioButton("Name", &sortType, 0); ImGui::SameLine();
