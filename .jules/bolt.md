@@ -13,3 +13,7 @@
 ## 2025-05-18 - [Dynamic Entity Considerations]
 **Learning:** While caching world positions for 'static' entities (GearItems, Carcasses) significantly reduces IL2CPP overhead, it can lead to visual desync if those entities are moved by the game engine (e.g., physics, explosions, or being carried). Always prioritize correctness and real-time accuracy over caching for world positions unless a high-frequency update pattern is established.
 **Action:** Removed `lastPosition` caching for entities. Reverted to per-frame `Transform_get_position` calls to ensure ESP markers stay perfectly aligned with moving or physics-affected objects.
+
+## 2025-05-19 - [Stability and Transition Safety]
+**Learning:** Storing raw pointers to Unity objects in global vectors without explicit cleanup during scene transitions or object destruction leads to Use-After-Free crashes. Additionally, asynchronous discovery (like scene scanning) requires strict mutex protection for both reading and writing to prevent race conditions.
+**Action:** Implemented `ClearAllLists` and hooked `GameManager::LoadMainMenu` to flush entity tracking during transitions. Added `activeInHierarchy` and null checks to all rendering loops. Ensured all list accesses in `DrawESP` are protected by the same mutexes used in hooks.

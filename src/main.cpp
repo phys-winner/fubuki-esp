@@ -310,14 +310,117 @@ std::string GetCarcassDisplayName(void *carcass) {
   typedef Unity::System_String *(*tGetDisplayName)(void *);
   static tGetDisplayName GetDisplayNameFunc = nullptr;
   if (!GetDisplayNameFunc) {
-      GetDisplayNameFunc = reinterpret_cast<tGetDisplayName>(
-          IL2CPP::Class::Utils::GetMethodPointer("BodyHarvest", "GetDisplayName", 0));
+    GetDisplayNameFunc = reinterpret_cast<tGetDisplayName>(
+        IL2CPP::Class::Utils::GetMethodPointer("BodyHarvest", "GetDisplayName",
+                                               0));
   }
-  if (!GetDisplayNameFunc) return "Carcass";
+  if (!GetDisplayNameFunc)
+    return "Carcass";
   auto ustr = GetDisplayNameFunc(carcass);
   return ustr ? ustr->ToString() : "Carcass";
 }
 
+void ClearAllLists() {
+  { std::lock_guard<std::mutex> lock(g_BaseAiMutex); g_BaseAiList.clear(); }
+  { std::lock_guard<std::mutex> lock(g_GearItemMutex); g_GearItemList.clear(); }
+  { std::lock_guard<std::mutex> lock(g_HarvestableMutex); g_HarvestableList.clear(); }
+  { std::lock_guard<std::mutex> lock(g_CarcassMutex); g_CarcassList.clear(); }
+}
+
+using tLoadMainMenu = void (*)();
+tLoadMainMenu oLoadMainMenu;
+
+void hkLoadMainMenu() {
+  ClearAllLists();
+  oLoadMainMenu();
+}
+
+void ScanForEntities() {
+  // GearItems
+  auto gearItems = Unity::Object::FindObjectsOfType<void>("GearItem");
+  if (gearItems) {
+    std::lock_guard<std::mutex> lock(g_GearItemMutex);
+    for (uintptr_t i = 0; i < gearItems->m_uMaxLength; i++) {
+      void *ptr = gearItems->operator[](i);
+      if (!ptr)
+        continue;
+      auto it = std::find_if(g_GearItemList.begin(), g_GearItemList.end(),
+                             [ptr](const CachedESPItem &item) {
+                               return item.ptr == ptr;
+                             });
+      if (it == g_GearItemList.end()) {
+        void *transform = Component_get_transform(ptr);
+        if (!transform)
+          continue;
+        std::string name = GetGearItemDisplayName(ptr);
+        g_GearItemList.push_back({ptr, transform, name, &g_ItemHidden[name]});
+      }
+    }
+  }
+
+  // BaseAi
+  auto baseAis = Unity::Object::FindObjectsOfType<void>("BaseAi");
+  if (baseAis) {
+    std::lock_guard<std::mutex> lock(g_BaseAiMutex);
+    for (uintptr_t i = 0; i < baseAis->m_uMaxLength; i++) {
+      void *ptr = baseAis->operator[](i);
+      if (!ptr)
+        continue;
+      auto it = std::find_if(
+          g_BaseAiList.begin(), g_BaseAiList.end(),
+          [ptr](const CachedESPItem &item) { return item.ptr == ptr; });
+      if (it == g_BaseAiList.end()) {
+        void *transform = Component_get_transform(ptr);
+        if (!transform)
+          continue;
+        std::string name = GetDisplayName(ptr);
+        g_BaseAiList.push_back({ptr, transform, name, &g_ItemHidden[name]});
+      }
+    }
+  }
+
+  // Harvestable
+  auto harvestables = Unity::Object::FindObjectsOfType<void>("Harvestable");
+  if (harvestables) {
+    std::lock_guard<std::mutex> lock(g_HarvestableMutex);
+    for (uintptr_t i = 0; i < harvestables->m_uMaxLength; i++) {
+      void *ptr = harvestables->operator[](i);
+      if (!ptr)
+        continue;
+      auto it = std::find_if(
+          g_HarvestableList.begin(), g_HarvestableList.end(),
+          [ptr](const CachedESPItem &item) { return item.ptr == ptr; });
+      if (it == g_HarvestableList.end()) {
+        void *transform = Component_get_transform(ptr);
+        if (!transform)
+          continue;
+        g_HarvestableList.push_back(
+            {ptr, transform, "", nullptr}); // Name not used for harvestables yet
+      }
+    }
+  }
+
+  // BodyHarvest
+  auto carcasses = Unity::Object::FindObjectsOfType<void>("BodyHarvest");
+  if (carcasses) {
+    std::lock_guard<std::mutex> lock(g_CarcassMutex);
+    for (uintptr_t i = 0; i < carcasses->m_uMaxLength; i++) {
+      void *ptr = carcasses->operator[](i);
+      if (!ptr)
+        continue;
+      auto it = std::find_if(
+          g_CarcassList.begin(), g_CarcassList.end(),
+          [ptr](const CachedESPItem &item) { return item.ptr == ptr; });
+      if (it == g_CarcassList.end()) {
+        void *transform = Component_get_transform(ptr);
+        if (!transform)
+          continue;
+        std::string name = GetCarcassDisplayName(ptr);
+        g_CarcassList.push_back({ptr, transform, name, &g_ItemHidden[name]});
+      }
+    }
+  }
+}
 
 void DrawESP() {
   if (!g_DrawEsp)
@@ -342,21 +445,21 @@ void DrawESP() {
     std::lock_guard<std::mutex> lock(g_BaseAiMutex);
     for (auto &ai : g_BaseAiList) {
       if (ai.pHidden && *ai.pHidden) continue;
-      if (!ai.transform) continue;
+      if (!ai.ptr || !ai.transform) continue;
+
+      auto gameObject = Component_get_gameObject(ai.ptr);
+      if (!gameObject || !GameObject_get_activeInHierarchy(gameObject)) continue;
 
       Unity::Vector3 worldPos = Transform_get_position(ai.transform);
 
       // Fast plane culling
-      Unity::Vector3 dir = {worldPos.x - camera_position.x,
-                            worldPos.y - camera_position.y,
-                            worldPos.z - camera_position.z};
-      if ((dir.x * camera_forward.x + dir.y * camera_forward.y +
-           dir.z * camera_forward.z) <= 0.0f)
-        continue;
+      Unity::Vector3 dir = {worldPos.x - camera_position.x, worldPos.y - camera_position.y, worldPos.z - camera_position.z};
+      if ((dir.x * camera_forward.x + dir.y * camera_forward.y + dir.z * camera_forward.z) <= 0.0f)
+          continue;
 
-      float distSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
+      float distSq = Vector3_DistanceSquared(camera_position, worldPos);
       if (distSq > maxDistSq)
-        continue;
+          continue;
 
       Unity::Vector3 screenPos = Camera_WorldToScreenPoint(
           camera, worldPos, Unity::m_eCameraEye::m_eCameraEye_Center);
@@ -377,9 +480,13 @@ void DrawESP() {
       offset += sprintf_s(textBuf + offset, sizeof(textBuf) - offset,
                           "[%.1fm.] ", dist);
 
-      if (g_ShowBaseAiName)
+      if (g_ShowBaseAiName) {
+        if (ai.name == "Unknown") {
+          ai.name = GetDisplayName(ai.ptr);
+        }
         sprintf_s(textBuf + offset, sizeof(textBuf) - offset, "%s",
                   ai.name.c_str());
+      }
 
       float y = io.DisplaySize.y - screenPos.y;
       draw->AddText(ImVec2(screenPos.x, y), IM_COL32(255, 100, 100, 255),
@@ -391,21 +498,21 @@ void DrawESP() {
     std::lock_guard<std::mutex> lock(g_GearItemMutex);
     for (auto &item : g_GearItemList) {
       if (item.pHidden && *item.pHidden) continue;
-      if (!item.transform) continue;
+      if (!item.ptr || !item.transform) continue;
+
+      auto gameObject = Component_get_gameObject(item.ptr);
+      if (!gameObject || !GameObject_get_activeInHierarchy(gameObject)) continue;
 
       Unity::Vector3 worldPos = Transform_get_position(item.transform);
 
       // Fast plane culling
-      Unity::Vector3 dir = {worldPos.x - camera_position.x,
-                            worldPos.y - camera_position.y,
-                            worldPos.z - camera_position.z};
-      if ((dir.x * camera_forward.x + dir.y * camera_forward.y +
-           dir.z * camera_forward.z) <= 0.0f)
-        continue;
+      Unity::Vector3 dir = {worldPos.x - camera_position.x, worldPos.y - camera_position.y, worldPos.z - camera_position.z};
+      if ((dir.x * camera_forward.x + dir.y * camera_forward.y + dir.z * camera_forward.z) <= 0.0f)
+          continue;
 
-      float distSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
+      float distSq = Vector3_DistanceSquared(camera_position, worldPos);
       if (distSq > maxDistSq)
-        continue;
+          continue;
 
       Unity::Vector3 screenPos = Camera_WorldToScreenPoint(
           camera, worldPos, Unity::m_eCameraEye::m_eCameraEye_Center);
@@ -413,6 +520,9 @@ void DrawESP() {
         continue;
 
       float dist = std::sqrtf(distSq);
+      if (item.name == "Unknown") {
+        item.name = GetGearItemDisplayName(item.ptr);
+      }
       sprintf_s(textBuf, "* [%.1fm.] %s", dist, item.name.c_str());
 
       float y = io.DisplaySize.y - screenPos.y;
@@ -424,25 +534,24 @@ void DrawESP() {
   if (g_ShowHarvestableESP) {
     std::lock_guard<std::mutex> lock(g_HarvestableMutex);
     for (auto &harvestable : g_HarvestableList) {
-      if (!harvestable.transform) continue;
+      if (!harvestable.ptr || !harvestable.transform) continue;
+
+      auto gameObject = Component_get_gameObject(harvestable.ptr);
+      if (!gameObject || !GameObject_get_activeInHierarchy(gameObject)) continue;
 
       Unity::Vector3 worldPos = Transform_get_position(harvestable.transform);
 
       // Fast plane culling
-      Unity::Vector3 dir = {worldPos.x - camera_position.x,
-                            worldPos.y - camera_position.y,
-                            worldPos.z - camera_position.z};
-      if ((dir.x * camera_forward.x + dir.y * camera_forward.y +
-           dir.z * camera_forward.z) <= 0.0f)
-        continue;
+      Unity::Vector3 dir = {worldPos.x - camera_position.x, worldPos.y - camera_position.y, worldPos.z - camera_position.z};
+      if ((dir.x * camera_forward.x + dir.y * camera_forward.y + dir.z * camera_forward.z) <= 0.0f)
+          continue;
 
-      float distSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
+      float distSq = Vector3_DistanceSquared(camera_position, worldPos);
       if (distSq > maxDistSq)
-        continue;
+          continue;
 
       Unity::Vector3 screenPos = Camera_WorldToScreenPoint(
-          camera, worldPos,
-          Unity::m_eCameraEye::m_eCameraEye_Center);
+          camera, worldPos, Unity::m_eCameraEye::m_eCameraEye_Center);
       if (screenPos.z < 0.1f)
         continue;
 
@@ -459,21 +568,21 @@ void DrawESP() {
     std::lock_guard<std::mutex> lock(g_CarcassMutex);
     for (auto &carcass : g_CarcassList) {
       if (carcass.pHidden && *carcass.pHidden) continue;
-      if (!carcass.transform) continue;
+      if (!carcass.ptr || !carcass.transform) continue;
+
+      auto gameObject = Component_get_gameObject(carcass.ptr);
+      if (!gameObject || !GameObject_get_activeInHierarchy(gameObject)) continue;
 
       Unity::Vector3 worldPos = Transform_get_position(carcass.transform);
 
       // Fast plane culling
-      Unity::Vector3 dir = {worldPos.x - camera_position.x,
-                            worldPos.y - camera_position.y,
-                            worldPos.z - camera_position.z};
-      if ((dir.x * camera_forward.x + dir.y * camera_forward.y +
-           dir.z * camera_forward.z) <= 0.0f)
-        continue;
+      Unity::Vector3 dir = {worldPos.x - camera_position.x, worldPos.y - camera_position.y, worldPos.z - camera_position.z};
+      if ((dir.x * camera_forward.x + dir.y * camera_forward.y + dir.z * camera_forward.z) <= 0.0f)
+          continue;
 
-      float distSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
+      float distSq = Vector3_DistanceSquared(camera_position, worldPos);
       if (distSq > maxDistSq)
-        continue;
+          continue;
 
       Unity::Vector3 screenPos = Camera_WorldToScreenPoint(
           camera, worldPos, Unity::m_eCameraEye::m_eCameraEye_Center);
@@ -481,6 +590,9 @@ void DrawESP() {
         continue;
 
       float dist = std::sqrtf(distSq);
+      if (carcass.name == "Carcass") {
+        carcass.name = GetCarcassDisplayName(carcass.ptr);
+      }
       float meatKg = *(float *)((uintptr_t)carcass.ptr + off_MeatAvailableKG);
       sprintf_s(textBuf, "* [%.1fm.] %s (%.1fkg)", dist, carcass.name.c_str(),
                 meatKg);
@@ -568,6 +680,10 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
       }
 
       ImGui::SliderFloat("ESP Distance", &g_EspDistance, 10.0f, 1000.0f);
+
+      if (ImGui::Button("Refresh Entities", ImVec2(248, 0))) {
+        ScanForEntities();
+      }
 
       ImGui::Separator();
       if (ImGui::Button("Visibility Menu", ImVec2(120, 0))) {
@@ -824,8 +940,15 @@ DWORD WINAPI MainThread(LPVOID lpReserved) {
   GearItem_get_DisplayNameWithCondition = reinterpret_cast<Unity::System_String * (*)(void *)>(
       IL2CPP::Class::Utils::GetMethodPointer("GearItem", "get_DisplayNameWithCondition", 0));
 
+  auto loadMainMenuPtr = IL2CPP::Class::Utils::GetMethodPointer("GameManager", "LoadMainMenu", 0);
+  if (loadMainMenuPtr) {
+      MH_CreateHook(loadMainMenuPtr, &hkLoadMainMenu, reinterpret_cast<void**>(&oLoadMainMenu));
+  }
+
   if (MH_OK != MH_EnableHook(MH_ALL_HOOKS))
     return 1;
+
+  ScanForEntities();
 
   pDummySwapChain->Release();
   pDummyDevice->Release();
