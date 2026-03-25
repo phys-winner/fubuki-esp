@@ -113,6 +113,7 @@ static Unity::System_String *(*GearItem_get_DisplayNameWithCondition)(
 struct CachedESPItem {
   void* ptr;
   void* transform; // Cached transform pointer
+  Unity::Vector3 lastPosition;
   std::string name;
   bool* pHidden;   // Pointer to visibility state in g_ItemHidden for O(1) lookup
 };
@@ -171,9 +172,10 @@ void hkBaseAiManagerAdd(void *__this) {
 
   std::string name = GetDisplayName(__this);
   void* transform = Component_get_transform(__this);
+  Unity::Vector3 pos = Transform_get_position(transform);
 
   std::lock_guard<std::mutex> lock(g_BaseAiMutex);
-  g_BaseAiList.push_back({__this, transform, name, &g_ItemHidden[name]});
+  g_BaseAiList.push_back({__this, transform, pos, name, &g_ItemHidden[name]});
 }
 
 using tBaseAiManagerRemove = void (*)(void *);
@@ -202,9 +204,10 @@ void hkGearManagerAdd(void *__this) {
 
   std::string name = GetGearItemDisplayName(__this);
   void* transform = Component_get_transform(__this);
+  Unity::Vector3 pos = Transform_get_position(transform);
 
   std::lock_guard<std::mutex> lock(g_GearItemMutex);
-  g_GearItemList.push_back({__this, transform, name, &g_ItemHidden[name]});
+  g_GearItemList.push_back({__this, transform, pos, name, &g_ItemHidden[name]});
 }
 
 using tGearManagerRemove = void (*)(void *);
@@ -232,9 +235,10 @@ void hkHarvestableManagerAdd(void *__this) {
   oHarvestableManagerAdd(__this);
 
   void* transform = Component_get_transform(__this);
+  Unity::Vector3 pos = Transform_get_position(transform);
 
   std::lock_guard<std::mutex> lock(g_HarvestableMutex);
-  g_HarvestableList.push_back({__this, transform, "", nullptr}); // Name not used for harvestables yet
+  g_HarvestableList.push_back({__this, transform, pos, "", nullptr}); // Name not used for harvestables yet
 }
 
 using tHarvestableManagerRemove = void (*)(void *);
@@ -263,9 +267,10 @@ void hkBodyHarvestManagerAdd(void *__this) {
 
   std::string name = GetCarcassDisplayName(__this);
   void* transform = Component_get_transform(__this);
+  Unity::Vector3 pos = Transform_get_position(transform);
 
   std::lock_guard<std::mutex> lock(g_CarcassMutex);
-  g_CarcassList.push_back({__this, transform, name, &g_ItemHidden[name]});
+  g_CarcassList.push_back({__this, transform, pos, name, &g_ItemHidden[name]});
 }
 
 using tBodyHarvestManagerRemove = void (*)(void *);
@@ -318,55 +323,6 @@ std::string GetCarcassDisplayName(void *carcass) {
   return ustr ? ustr->ToString() : "Carcass";
 }
 
-Unity::Vector3 GetGearItemWorldPosition(Unity::CComponent *gearItem) {
-  if (gearItem == nullptr) {
-    return {-9999.0f, -9999.0f, -9999.0f};
-  }
-  auto gameObject = Component_get_gameObject(gearItem);
-  if (gameObject == nullptr) {
-    return {-9999.0f, -9999.0f, -9999.0f};
-  }
-
-  if (!GameObject_get_activeInHierarchy(gameObject)) {
-    return {-9999.0f, -9999.0f, -9999.0f};
-  }
-
-  auto transform = GameObject_get_transform(gameObject);
-  auto pos = Transform_get_position(transform);
-
-  return pos;
-}
-
-Unity::Vector3 GetWorldPosition(Unity::CComponent *ai) {
-  auto transform = Component_get_transform(ai);
-  auto pos = Transform_get_position(transform);
-
-  return pos;
-}
-
-Unity::Vector3 GetCameraPosition(void *camera) {
-  static void* lastCamera = nullptr;
-  static void* cachedTransform = nullptr;
-
-  if (camera != lastCamera) {
-    lastCamera = camera;
-    cachedTransform = Component_get_transform(camera);
-  }
-
-  return Transform_get_position(cachedTransform);
-}
-
-Unity::Vector3 GetCameraForward(void *camera) {
-  static void* lastCamera = nullptr;
-  static void* cachedTransform = nullptr;
-
-  if (camera != lastCamera) {
-    lastCamera = camera;
-    cachedTransform = Component_get_transform(camera);
-  }
-
-  return Transform_get_forward(cachedTransform);
-}
 
 void DrawESP() {
   if (!g_DrawEsp)
@@ -374,12 +330,16 @@ void DrawESP() {
 
   auto camera = GameManager_GetMainCamera();
   if (camera == nullptr)
-      return;
+    return;
+
+  void *camera_transform = Component_get_transform(camera);
+  if (camera_transform == nullptr)
+    return;
 
   ImDrawList *draw = ImGui::GetBackgroundDrawList();
   ImGuiIO &io = ImGui::GetIO();
-  Unity::Vector3 camera_position = GetCameraPosition(camera);
-  Unity::Vector3 camera_forward = GetCameraForward(camera);
+  Unity::Vector3 camera_position = Transform_get_position(camera_transform);
+  Unity::Vector3 camera_forward = Transform_get_forward(camera_transform);
   float maxDistSq = g_EspDistance * g_EspDistance;
   char textBuf[256];
 
@@ -389,20 +349,23 @@ void DrawESP() {
       if (ai.pHidden && *ai.pHidden) continue;
       if (!ai.transform) continue;
 
-      // Update position every frame for AI
-      Unity::Vector3 worldPos = Transform_get_position(ai.transform);
+      // Update position every frame for AI since they move
+      ai.lastPosition = Transform_get_position(ai.transform);
 
       // Fast plane culling
-      Unity::Vector3 dir = { worldPos.x - camera_position.x, worldPos.y - camera_position.y, worldPos.z - camera_position.z };
-      if ((dir.x * camera_forward.x + dir.y * camera_forward.y + dir.z * camera_forward.z) <= 0.0f)
-          continue;
+      Unity::Vector3 dir = {ai.lastPosition.x - camera_position.x,
+                            ai.lastPosition.y - camera_position.y,
+                            ai.lastPosition.z - camera_position.z};
+      if ((dir.x * camera_forward.x + dir.y * camera_forward.y +
+           dir.z * camera_forward.z) <= 0.0f)
+        continue;
 
-      float distSq = Vector3_DistanceSquared(camera_position, worldPos);
+      float distSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
       if (distSq > maxDistSq)
-          continue;
+        continue;
 
       Unity::Vector3 screenPos = Camera_WorldToScreenPoint(
-          camera, worldPos, Unity::m_eCameraEye::m_eCameraEye_Center);
+          camera, ai.lastPosition, Unity::m_eCameraEye::m_eCameraEye_Center);
 
       if (screenPos.z < 0.1f)
         continue;
@@ -413,16 +376,20 @@ void DrawESP() {
       if (g_ShowBaseAiHP) {
         int hp = (int)GetCurrentHP(ai.ptr);
         int maxHp = (int)GetMaxHP(ai.ptr);
-        offset += sprintf_s(textBuf + offset, sizeof(textBuf) - offset, "[%d/%d] ", hp, maxHp);
+        offset += sprintf_s(textBuf + offset, sizeof(textBuf) - offset,
+                            "[%d/%d] ", hp, maxHp);
       }
 
-      offset += sprintf_s(textBuf + offset, sizeof(textBuf) - offset, "[%.1fm.] ", dist);
+      offset += sprintf_s(textBuf + offset, sizeof(textBuf) - offset,
+                          "[%.1fm.] ", dist);
 
       if (g_ShowBaseAiName)
-        sprintf_s(textBuf + offset, sizeof(textBuf) - offset, "%s", ai.name.c_str());
+        sprintf_s(textBuf + offset, sizeof(textBuf) - offset, "%s",
+                  ai.name.c_str());
 
       float y = io.DisplaySize.y - screenPos.y;
-      draw->AddText(ImVec2(screenPos.x, y), IM_COL32(255, 100, 100, 255), textBuf);
+      draw->AddText(ImVec2(screenPos.x, y), IM_COL32(255, 100, 100, 255),
+                    textBuf);
     }
   }
 
@@ -432,20 +399,22 @@ void DrawESP() {
       if (item.pHidden && *item.pHidden) continue;
       if (!item.transform) continue;
 
-      // Update position every frame
-      Unity::Vector3 worldPos = Transform_get_position(item.transform);
+      // Use cached lastPosition for static objects
 
       // Fast plane culling
-      Unity::Vector3 dir = { worldPos.x - camera_position.x, worldPos.y - camera_position.y, worldPos.z - camera_position.z };
-      if ((dir.x * camera_forward.x + dir.y * camera_forward.y + dir.z * camera_forward.z) <= 0.0f)
-          continue;
+      Unity::Vector3 dir = {item.lastPosition.x - camera_position.x,
+                            item.lastPosition.y - camera_position.y,
+                            item.lastPosition.z - camera_position.z};
+      if ((dir.x * camera_forward.x + dir.y * camera_forward.y +
+           dir.z * camera_forward.z) <= 0.0f)
+        continue;
 
-      float distSq = Vector3_DistanceSquared(camera_position, worldPos);
+      float distSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
       if (distSq > maxDistSq)
-          continue;
+        continue;
 
       Unity::Vector3 screenPos = Camera_WorldToScreenPoint(
-          camera, worldPos, Unity::m_eCameraEye::m_eCameraEye_Center);
+          camera, item.lastPosition, Unity::m_eCameraEye::m_eCameraEye_Center);
       if (screenPos.z < 0.1f)
         continue;
 
@@ -453,7 +422,8 @@ void DrawESP() {
       sprintf_s(textBuf, "* [%.1fm.] %s", dist, item.name.c_str());
 
       float y = io.DisplaySize.y - screenPos.y;
-      draw->AddText(ImVec2(screenPos.x, y), IM_COL32(255, 255, 100, 255), textBuf);
+      draw->AddText(ImVec2(screenPos.x, y), IM_COL32(255, 255, 100, 255),
+                    textBuf);
     }
   }
 
@@ -462,20 +432,23 @@ void DrawESP() {
     for (auto &harvestable : g_HarvestableList) {
       if (!harvestable.transform) continue;
 
-      // Update position every frame
-      Unity::Vector3 worldPos = Transform_get_position(harvestable.transform);
+      // Use cached lastPosition for static objects
 
       // Fast plane culling
-      Unity::Vector3 dir = { worldPos.x - camera_position.x, worldPos.y - camera_position.y, worldPos.z - camera_position.z };
-      if ((dir.x * camera_forward.x + dir.y * camera_forward.y + dir.z * camera_forward.z) <= 0.0f)
-          continue;
+      Unity::Vector3 dir = {harvestable.lastPosition.x - camera_position.x,
+                            harvestable.lastPosition.y - camera_position.y,
+                            harvestable.lastPosition.z - camera_position.z};
+      if ((dir.x * camera_forward.x + dir.y * camera_forward.y +
+           dir.z * camera_forward.z) <= 0.0f)
+        continue;
 
-      float distSq = Vector3_DistanceSquared(camera_position, worldPos);
+      float distSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
       if (distSq > maxDistSq)
-          continue;
+        continue;
 
       Unity::Vector3 screenPos = Camera_WorldToScreenPoint(
-          camera, worldPos, Unity::m_eCameraEye::m_eCameraEye_Center);
+          camera, harvestable.lastPosition,
+          Unity::m_eCameraEye::m_eCameraEye_Center);
       if (screenPos.z < 0.1f)
         continue;
 
@@ -483,7 +456,8 @@ void DrawESP() {
       sprintf_s(textBuf, "* [%.1fm.]", dist);
 
       float y = io.DisplaySize.y - screenPos.y;
-      draw->AddText(ImVec2(screenPos.x, y), IM_COL32(255, 255, 100, 255), textBuf);
+      draw->AddText(ImVec2(screenPos.x, y), IM_COL32(255, 255, 100, 255),
+                    textBuf);
     }
   }
 
@@ -493,27 +467,32 @@ void DrawESP() {
       if (carcass.pHidden && *carcass.pHidden) continue;
       if (!carcass.transform) continue;
 
-      Unity::Vector3 worldPos = Transform_get_position(carcass.transform);
+      // Use cached lastPosition for static objects
 
-      Unity::Vector3 dir = { worldPos.x - camera_position.x, worldPos.y - camera_position.y, worldPos.z - camera_position.z };
-      if ((dir.x * camera_forward.x + dir.y * camera_forward.y + dir.z * camera_forward.z) <= 0.0f)
-          continue;
+      Unity::Vector3 dir = {carcass.lastPosition.x - camera_position.x,
+                            carcass.lastPosition.y - camera_position.y,
+                            carcass.lastPosition.z - camera_position.z};
+      if ((dir.x * camera_forward.x + dir.y * camera_forward.y +
+           dir.z * camera_forward.z) <= 0.0f)
+        continue;
 
-      float distSq = Vector3_DistanceSquared(camera_position, worldPos);
+      float distSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
       if (distSq > maxDistSq)
-          continue;
+        continue;
 
       Unity::Vector3 screenPos = Camera_WorldToScreenPoint(
-          camera, worldPos, Unity::m_eCameraEye::m_eCameraEye_Center);
+          camera, carcass.lastPosition, Unity::m_eCameraEye::m_eCameraEye_Center);
       if (screenPos.z < 0.1f)
         continue;
 
       float dist = std::sqrtf(distSq);
-      float meatKg = *(float*)((uintptr_t)carcass.ptr + off_MeatAvailableKG);
-      sprintf_s(textBuf, "* [%.1fm.] %s (%.1fkg)", dist, carcass.name.c_str(), meatKg);
+      float meatKg = *(float *)((uintptr_t)carcass.ptr + off_MeatAvailableKG);
+      sprintf_s(textBuf, "* [%.1fm.] %s (%.1fkg)", dist, carcass.name.c_str(),
+                meatKg);
 
       float y = io.DisplaySize.y - screenPos.y;
-      draw->AddText(ImVec2(screenPos.x, y), IM_COL32(255, 165, 0, 255), textBuf); // Orange for carcasses
+      draw->AddText(ImVec2(screenPos.x, y), IM_COL32(255, 165, 0, 255),
+                    textBuf); // Orange for carcasses
     }
   }
 }

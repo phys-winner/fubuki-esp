@@ -9,3 +9,7 @@
 ## 2025-05-17 - [Advanced ESP Optimization Patterns]
 **Learning:** Beyond caching static pointers, per-frame IL2CPP method calls for on-screen projections (`WorldToScreenPoint`) are major bottlenecks when processing 100+ entities. While staggered position updates are a common performance win, they can reduce visual accuracy. Plane-culling remains a zero-compromise optimization for maintaining high FPS.
 **Action:** Prioritize per-frame position accuracy when requested by updating entity positions every frame (`Transform_get_position`). To offset the IL2CPP overhead, always implement a fast C++ dot-product plane check to cull off-screen entities before calling expensive projection methods. Avoid using member functions on POD structs like `Unity::Vector3` unless explicitly defined; use manual component math instead.
+
+## 2025-05-18 - [Optimized ESP Data Structures]
+**Learning:** ESP performance is significantly improved by caching entity world positions during registration for static objects (GearItems, Harvestables, etc.). This eliminates hundreds of redundant cross-domain IL2CPP `Transform_get_position` calls per frame.
+**Action:** Add a `lastPosition` field to entity registration structs. Initialize it once in 'Add' hooks. In the rendering loop, only update `lastPosition` for moving entities (BaseAi) and reuse the cached value for static ones.
