@@ -13,3 +13,7 @@
 ## 2025-05-24 - [Filtering & Safety Design Patterns]
 **Learning:** For destructive modals, setting default focus to the "Cancel" button using `ImGui::SetItemDefaultFocus()` prevents accidental confirmation. In search filters, `ImGui::InputTextWithHint` improves clarity, while bulk actions (Show/Hide All) that target only the filtered subset enhance user efficiency. Providing explicit empty state messages (e.g., "No items matching filter") reduces user confusion.
 **Action:** Prioritize safety-first button focus, use hints in text inputs, and implement bulk actions on filtered subsets to improve UX flow.
+
+## 2025-05-25 - [Unit Clarity & Quick-Reset Patterns]
+**Learning:** Numerical sliders for distance or magnitude are more intuitive when paired with unit suffixes (e.g., "m" for meters). Furthermore, implementing a "right-click to reset" shortcut via `ImGui::IsItemClicked(1)` provides a powerful efficiency boost for returning to safe defaults without tedious manual adjustment.
+**Action:** Use unit-aware format strings in sliders and always provide a right-click reset to the default value, documented via tooltip.

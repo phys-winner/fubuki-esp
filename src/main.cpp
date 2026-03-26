@@ -633,7 +633,9 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
         ImGui::Text("Found %zu Carcass", g_CarcassList.size());
       }
 
-      ImGui::SliderFloat("ESP Distance", &g_EspDistance, 10.0f, 1000.0f);
+      ImGui::SliderFloat("ESP Distance", &g_EspDistance, 10.0f, 1000.0f, "%.0fm");
+      if (ImGui::IsItemClicked(1)) g_EspDistance = 250.0f;
+      ImGui::SetItemTooltip("Maximum distance for ESP markers.\nRight-click to reset to default (250m).");
 
       ImGui::Separator();
       if (ImGui::Button("Visibility Menu", ImVec2(120, 0))) {
