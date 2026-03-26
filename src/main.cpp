@@ -52,6 +52,9 @@ bool g_ShowGearItemESP = false;
 bool g_ShowHarvestableESP = false;
 bool g_ShowCarcassESP = false;
 
+bool g_Fullbright = false;
+bool g_ClearWeather = false;
+
 float g_EspDistance = 250.0f;
 
 bool g_ShowVisibilityMenu = false;
@@ -129,10 +132,23 @@ uintptr_t off_MaxHP;
 uintptr_t off_DisplayName;
 uintptr_t off_MeatAvailableKG;
 
+uintptr_t off_m_ForceClearWeather = -1;
+uintptr_t off_m_MiddayMultiplier = -1;
+uintptr_t off_m_MiddayAmbientMultiplier = -1;
+uintptr_t off_m_SandboxAmbientMultiplier = -1;
+
 uintptr_t off_PanelMainMenu_StartFadedOut = 0;
 uintptr_t off_PanelMainMenu_InitialScreenFadeInDuration = 0;
 uintptr_t off_PanelSandbox_InitialScreenFadeInDuration = 0;
 Unity::il2cppClass* g_moviePlayerClass = nullptr;
+Unity::il2cppClass* g_InteriorLightingManagerClass = nullptr;
+
+void* g_LastLightingManager = nullptr;
+bool g_OrigValuesCaptured = false;
+float g_OrigMiddayMultiplier = 1.0f;
+float g_OrigMiddayAmbientMultiplier = 1.0f;
+float g_OrigSandboxAmbientMultiplier = 1.0f;
+bool g_OrigForceClearWeather = false;
 
 // Skip Fake Hook Typedefs
 typedef void (*tPanelMainMenu_Enable)(void*, bool);
@@ -561,6 +577,47 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
     ImGui::NewFrame();
 
     DrawESP();
+
+    if (g_InteriorLightingManagerClass) {
+        auto type_object = IL2CPP::Class::GetSystemType(g_InteriorLightingManagerClass);
+        auto array = Unity::Object::FindObjectsOfType<void*>(type_object);
+
+        if (array && array->m_uMaxLength > 0) {
+            void* manager = array->operator[](0);
+            if (manager != g_LastLightingManager) {
+                g_LastLightingManager = manager;
+                g_OrigValuesCaptured = false;
+            }
+
+            if (!g_OrigValuesCaptured) {
+                if (off_m_MiddayMultiplier != -1) g_OrigMiddayMultiplier = *(float*)((uintptr_t)manager + off_m_MiddayMultiplier);
+                if (off_m_MiddayAmbientMultiplier != -1) g_OrigMiddayAmbientMultiplier = *(float*)((uintptr_t)manager + off_m_MiddayAmbientMultiplier);
+                if (off_m_SandboxAmbientMultiplier != -1) g_OrigSandboxAmbientMultiplier = *(float*)((uintptr_t)manager + off_m_SandboxAmbientMultiplier);
+                if (off_m_ForceClearWeather != -1) g_OrigForceClearWeather = *(bool*)((uintptr_t)manager + off_m_ForceClearWeather);
+                g_OrigValuesCaptured = true;
+            }
+
+            if (g_Fullbright) {
+                if (off_m_MiddayMultiplier != -1) *(float*)((uintptr_t)manager + off_m_MiddayMultiplier) = 5.0f;
+                if (off_m_MiddayAmbientMultiplier != -1) *(float*)((uintptr_t)manager + off_m_MiddayAmbientMultiplier) = 5.0f;
+                if (off_m_SandboxAmbientMultiplier != -1) *(float*)((uintptr_t)manager + off_m_SandboxAmbientMultiplier) = 5.0f;
+            } else if (g_OrigValuesCaptured) {
+                if (off_m_MiddayMultiplier != -1) *(float*)((uintptr_t)manager + off_m_MiddayMultiplier) = g_OrigMiddayMultiplier;
+                if (off_m_MiddayAmbientMultiplier != -1) *(float*)((uintptr_t)manager + off_m_MiddayAmbientMultiplier) = g_OrigMiddayAmbientMultiplier;
+                if (off_m_SandboxAmbientMultiplier != -1) *(float*)((uintptr_t)manager + off_m_SandboxAmbientMultiplier) = g_OrigSandboxAmbientMultiplier;
+            }
+
+            if (g_ClearWeather) {
+                if (off_m_ForceClearWeather != -1) *(bool*)((uintptr_t)manager + off_m_ForceClearWeather) = true;
+            } else if (g_OrigValuesCaptured) {
+                if (off_m_ForceClearWeather != -1) *(bool*)((uintptr_t)manager + off_m_ForceClearWeather) = g_OrigForceClearWeather;
+            }
+        } else {
+            g_LastLightingManager = nullptr;
+            g_OrigValuesCaptured = false;
+        }
+    }
+
     if (showMenu) {
       ImGui::Begin("Fubuki-ESP | The Long Dark", &showMenu, ImGuiWindowFlags_AlwaysAutoResize);
       ImGui::TextDisabled("Controls: [INS] Menu | [END] Unload");
@@ -611,6 +668,13 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
       ImGui::SliderFloat("ESP Distance", &g_EspDistance, 10.0f, 1000.0f, "%.0fm");
       if (ImGui::IsItemClicked(1)) g_EspDistance = 250.0f;
       ImGui::SetItemTooltip("Maximum distance for ESP markers.\nRight-click to reset to default (250m).");
+
+      ImGui::Separator();
+      ImGui::Text("Visuals");
+      ImGui::Checkbox("Fullbright", &g_Fullbright);
+      ImGui::SetItemTooltip("Eliminate darkness by maximizing interior and ambient lighting multipliers.");
+      ImGui::Checkbox("Clear Weather", &g_ClearWeather);
+      ImGui::SetItemTooltip("Force clear weather conditions to eliminate blizzards and fog hazards.");
 
       ImGui::Separator();
       if (ImGui::Button("Visibility Menu", ImVec2(120, 0))) {
@@ -745,6 +809,14 @@ bool InitOffsets() {
   off_DisplayName =
       IL2CPP::Class::Utils::GetFieldOffset("BaseAi", "m_DisplayName");
   off_MeatAvailableKG = IL2CPP::Class::Utils::GetFieldOffset("BodyHarvest", "m_MeatAvailableKG");
+
+  g_InteriorLightingManagerClass = IL2CPP::Class::Find("InteriorLightingManager");
+  if (g_InteriorLightingManagerClass) {
+      off_m_ForceClearWeather = IL2CPP::Class::Utils::GetFieldOffset(g_InteriorLightingManagerClass, "m_ForceClearWeather");
+      off_m_MiddayMultiplier = IL2CPP::Class::Utils::GetFieldOffset(g_InteriorLightingManagerClass, "m_MiddayMultiplier");
+      off_m_MiddayAmbientMultiplier = IL2CPP::Class::Utils::GetFieldOffset(g_InteriorLightingManagerClass, "m_MiddayAmbientMultiplier");
+      off_m_SandboxAmbientMultiplier = IL2CPP::Class::Utils::GetFieldOffset(g_InteriorLightingManagerClass, "m_SandboxAmbientMultiplier");
+  }
 
   // Skip Fade Offsets
   off_PanelMainMenu_StartFadedOut = IL2CPP::Class::Utils::GetFieldOffset("Panel_MainMenu", "m_StartFadedOut");
