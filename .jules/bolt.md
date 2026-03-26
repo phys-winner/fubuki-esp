@@ -9,3 +9,7 @@
 ## 2025-05-17 - [Advanced ESP Optimization Patterns]
 **Learning:** Beyond caching static pointers, per-frame IL2CPP method calls for on-screen projections (`WorldToScreenPoint`) are major bottlenecks when processing 100+ entities. While staggered position updates are a common performance win, they can reduce visual accuracy. Plane-culling remains a zero-compromise optimization for maintaining high FPS.
 **Action:** Prioritize per-frame position accuracy when requested by updating entity positions every frame (`Transform_get_position`). To offset the IL2CPP overhead, always implement a fast C++ dot-product plane check to cull off-screen entities before calling expensive projection methods. Avoid using member functions on POD structs like `Unity::Vector3` unless explicitly defined; use manual component math instead.
+
+## 2025-05-18 - [Hot-Path Math Consolidation]
+**Learning:** In performance-critical loops like `DrawESP`, every instruction counts. Calculating the relative direction vector (`worldPos - cameraPos`) and then immediately calling a distance function that performs the same subtraction is a waste of cycles.
+**Action:** Reuse the components of the relative direction vector `dir` calculated for plane-culling to manually compute the squared distance (`dir.x * dir.x + ...`). This eliminates 3 redundant subtractions per entity in the rendering path.
