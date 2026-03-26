@@ -24,9 +24,6 @@ typedef HRESULT(WINAPI *ResizeBuffers)(IDXGISwapChain *pSwapChain,
                                        UINT BufferCount, UINT Width,
                                        UINT Height, DXGI_FORMAT NewFormat,
                                        UINT SwapChainFlags);
-typedef void(WINAPI *DrawIndexed)(ID3D11DeviceContext *pContext,
-                                  UINT IndexCount, UINT StartIndexLocation,
-                                  INT BaseVertexLocation);
 typedef LRESULT(CALLBACK *WNDPROC)(HWND, UINT, WPARAM, LPARAM);
 
 // Original function pointers
@@ -366,30 +363,6 @@ std::string GetCarcassDisplayName(void *carcass) {
   return ustr ? ustr->ToString() : "Carcass";
 }
 
-Unity::Vector3 GetCameraPosition(void *camera) {
-  static void* lastCamera = nullptr;
-  static void* cachedTransform = nullptr;
-
-  if (camera != lastCamera) {
-    lastCamera = camera;
-    cachedTransform = Component_get_transform(camera);
-  }
-
-  return Transform_get_position(cachedTransform);
-}
-
-Unity::Vector3 GetCameraForward(void *camera) {
-  static void* lastCamera = nullptr;
-  static void* cachedTransform = nullptr;
-
-  if (camera != lastCamera) {
-    lastCamera = camera;
-    cachedTransform = Component_get_transform(camera);
-  }
-
-  return Transform_get_forward(cachedTransform);
-}
-
 void DrawESP() {
   if (!g_DrawEsp)
     return;
@@ -406,8 +379,12 @@ void DrawESP() {
 
   ImDrawList *draw = ImGui::GetBackgroundDrawList();
   ImGuiIO &io = ImGui::GetIO();
-  Unity::Vector3 camera_position = GetCameraPosition(camera);
-  Unity::Vector3 camera_forward = GetCameraForward(camera);
+
+  void* camera_transform = Component_get_transform(camera);
+  if (!camera_transform) return;
+
+  Unity::Vector3 camera_position = Transform_get_position(camera_transform);
+  Unity::Vector3 camera_forward = Transform_get_forward(camera_transform);
   float maxDistSq = g_EspDistance * g_EspDistance;
   char textBuf[256];
 
@@ -808,7 +785,6 @@ DWORD WINAPI MainThread(LPVOID lpReserved) {
   }
 
   void **pVTable = *(void ***)pDummySwapChain;
-  void **pContextVTable = *(void ***)pDummyContext;
 
   void *pPresent = pVTable[8];
   void *pResizeBuffers = pVTable[13];
