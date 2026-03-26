@@ -24,9 +24,6 @@ typedef HRESULT(WINAPI *ResizeBuffers)(IDXGISwapChain *pSwapChain,
                                        UINT BufferCount, UINT Width,
                                        UINT Height, DXGI_FORMAT NewFormat,
                                        UINT SwapChainFlags);
-typedef void(WINAPI *DrawIndexed)(ID3D11DeviceContext *pContext,
-                                  UINT IndexCount, UINT StartIndexLocation,
-                                  INT BaseVertexLocation);
 typedef LRESULT(CALLBACK *WNDPROC)(HWND, UINT, WPARAM, LPARAM);
 
 // Original function pointers
@@ -38,6 +35,8 @@ WNDPROC oWndProc = NULL;
 ID3D11Device *pDevice = NULL;
 ID3D11DeviceContext *pContext = NULL;
 ID3D11RenderTargetView *mainRenderTargetView = NULL;
+void *g_LastCamera = NULL;
+void *g_CachedCameraTransform = NULL;
 HWND window = NULL;
 bool init = false;
 bool showMenu = true;
@@ -186,13 +185,6 @@ void hkPanelMainMenu_UpdateFading(void* __instance) {
 
 void hkPanelMainMenu_SetPanelAlpha(void* __instance, float alpha) {
     oPanelMainMenu_SetPanelAlpha(__instance, 1.0f);
-}
-
-float Vector3_DistanceSquared(const Unity::Vector3 &v1, const Unity::Vector3 &v2) {
-  float deltaX = v1.x - v2.x;
-  float deltaY = v1.y - v2.y;
-  float deltaZ = v1.z - v2.z;
-  return deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ;
 }
 
 // Forward declarations
@@ -366,30 +358,6 @@ std::string GetCarcassDisplayName(void *carcass) {
   return ustr ? ustr->ToString() : "Carcass";
 }
 
-Unity::Vector3 GetCameraPosition(void *camera) {
-  static void* lastCamera = nullptr;
-  static void* cachedTransform = nullptr;
-
-  if (camera != lastCamera) {
-    lastCamera = camera;
-    cachedTransform = Component_get_transform(camera);
-  }
-
-  return Transform_get_position(cachedTransform);
-}
-
-Unity::Vector3 GetCameraForward(void *camera) {
-  static void* lastCamera = nullptr;
-  static void* cachedTransform = nullptr;
-
-  if (camera != lastCamera) {
-    lastCamera = camera;
-    cachedTransform = Component_get_transform(camera);
-  }
-
-  return Transform_get_forward(cachedTransform);
-}
-
 void DrawESP() {
   if (!g_DrawEsp)
     return;
@@ -406,8 +374,14 @@ void DrawESP() {
 
   ImDrawList *draw = ImGui::GetBackgroundDrawList();
   ImGuiIO &io = ImGui::GetIO();
-  Unity::Vector3 camera_position = GetCameraPosition(camera);
-  Unity::Vector3 camera_forward = GetCameraForward(camera);
+
+  if (camera != g_LastCamera) {
+      g_LastCamera = camera;
+      g_CachedCameraTransform = Component_get_transform(camera);
+  }
+
+  Unity::Vector3 camera_position = Transform_get_position(g_CachedCameraTransform);
+  Unity::Vector3 camera_forward = Transform_get_forward(g_CachedCameraTransform);
   float maxDistSq = g_EspDistance * g_EspDistance;
   char textBuf[256];
 
@@ -420,12 +394,12 @@ void DrawESP() {
       // Update position every frame for AI
       Unity::Vector3 worldPos = Transform_get_position(ai.transform);
 
-      // Fast plane culling
+      // Fast plane culling and squared distance calculation
       Unity::Vector3 dir = { worldPos.x - camera_position.x, worldPos.y - camera_position.y, worldPos.z - camera_position.z };
       if ((dir.x * camera_forward.x + dir.y * camera_forward.y + dir.z * camera_forward.z) <= 0.0f)
           continue;
 
-      float distSq = Vector3_DistanceSquared(camera_position, worldPos);
+      float distSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
       if (distSq > maxDistSq)
           continue;
 
@@ -463,12 +437,12 @@ void DrawESP() {
       // Update position every frame
       Unity::Vector3 worldPos = Transform_get_position(item.transform);
 
-      // Fast plane culling
+      // Fast plane culling and squared distance calculation
       Unity::Vector3 dir = { worldPos.x - camera_position.x, worldPos.y - camera_position.y, worldPos.z - camera_position.z };
       if ((dir.x * camera_forward.x + dir.y * camera_forward.y + dir.z * camera_forward.z) <= 0.0f)
           continue;
 
-      float distSq = Vector3_DistanceSquared(camera_position, worldPos);
+      float distSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
       if (distSq > maxDistSq)
           continue;
 
@@ -493,12 +467,12 @@ void DrawESP() {
       // Update position every frame
       Unity::Vector3 worldPos = Transform_get_position(harvestable.transform);
 
-      // Fast plane culling
+      // Fast plane culling and squared distance calculation
       Unity::Vector3 dir = { worldPos.x - camera_position.x, worldPos.y - camera_position.y, worldPos.z - camera_position.z };
       if ((dir.x * camera_forward.x + dir.y * camera_forward.y + dir.z * camera_forward.z) <= 0.0f)
           continue;
 
-      float distSq = Vector3_DistanceSquared(camera_position, worldPos);
+      float distSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
       if (distSq > maxDistSq)
           continue;
 
@@ -523,11 +497,12 @@ void DrawESP() {
 
       Unity::Vector3 worldPos = Transform_get_position(carcass.transform);
 
+      // Fast plane culling and squared distance calculation
       Unity::Vector3 dir = { worldPos.x - camera_position.x, worldPos.y - camera_position.y, worldPos.z - camera_position.z };
       if ((dir.x * camera_forward.x + dir.y * camera_forward.y + dir.z * camera_forward.z) <= 0.0f)
           continue;
 
-      float distSq = Vector3_DistanceSquared(camera_position, worldPos);
+      float distSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
       if (distSq > maxDistSq)
           continue;
 
@@ -808,7 +783,6 @@ DWORD WINAPI MainThread(LPVOID lpReserved) {
   }
 
   void **pVTable = *(void ***)pDummySwapChain;
-  void **pContextVTable = *(void ***)pDummyContext;
 
   void *pPresent = pVTable[8];
   void *pResizeBuffers = pVTable[13];
