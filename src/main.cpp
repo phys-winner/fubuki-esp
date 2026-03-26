@@ -51,6 +51,8 @@ bool g_ShowBaseAiName = true;
 bool g_ShowGearItemESP = false;
 bool g_ShowHarvestableESP = false;
 bool g_ShowCarcassESP = false;
+bool g_ShowContainerESP = false;
+bool g_ShowContainerContents = false;
 
 float g_EspDistance = 250.0f;
 
@@ -119,15 +121,21 @@ std::vector<CachedESPItem> g_BaseAiList;
 std::vector<CachedESPItem> g_GearItemList;
 std::vector<CachedESPItem> g_HarvestableList;
 std::vector<CachedESPItem> g_CarcassList;
+std::vector<CachedESPItem> g_ContainerList;
 std::mutex g_BaseAiMutex;
 std::mutex g_GearItemMutex;
 std::mutex g_HarvestableMutex;
 std::mutex g_CarcassMutex;
+std::mutex g_ContainerMutex;
 
 uintptr_t off_CurrentHP;
 uintptr_t off_MaxHP;
 uintptr_t off_DisplayName;
 uintptr_t off_MeatAvailableKG;
+uintptr_t off_ContainerItems;
+uintptr_t off_GearItemObject_GearItem = -1;
+uintptr_t off_ListItems;
+uintptr_t off_ListSize;
 
 uintptr_t off_PanelMainMenu_StartFadedOut = 0;
 uintptr_t off_PanelMainMenu_InitialScreenFadeInDuration = 0;
@@ -330,6 +338,37 @@ void hkBodyHarvestManagerRemove(void *__this) {
   oBodyHarvestManagerRemove(__this);
 }
 
+using tContainerOnEnable = void (*)(void *);
+tContainerOnEnable oContainerOnEnable;
+
+void hkContainerOnEnable(void *__this) {
+  oContainerOnEnable(__this);
+
+  std::string name = ((Unity::CObject*)__this)->GetName()->ToString();
+  void* transform = Component_get_transform(__this);
+
+  std::lock_guard<std::mutex> lock(g_ContainerMutex);
+  g_ContainerList.push_back({__this, transform, name, &g_ItemHidden[name]});
+}
+
+using tContainerOnDisable = void (*)(void *);
+tContainerOnDisable oContainerOnDisable;
+
+void hkContainerOnDisable(void *__this) {
+  {
+    std::lock_guard<std::mutex> lock(g_ContainerMutex);
+    auto it = std::find_if(g_ContainerList.begin(), g_ContainerList.end(),
+                           [__this](const CachedESPItem& item) { return item.ptr == __this; });
+
+    if (it != g_ContainerList.end()) {
+      std::swap(*it,
+                g_ContainerList.back()); // Swap the element with the last one
+      g_ContainerList.pop_back();        // Remove the last element
+    }
+  }
+  oContainerOnDisable(__this);
+}
+
 float GetCurrentHP(void *ai) {
   return *(float *)((uintptr_t)ai + off_CurrentHP);
 }
@@ -519,6 +558,59 @@ void DrawESP() {
       draw->AddText(ImVec2(screenPos.x, y), IM_COL32(255, 165, 0, 255), textBuf); // Orange for carcasses
     }
   }
+
+  if (g_ShowContainerESP) {
+    std::lock_guard<std::mutex> lock(g_ContainerMutex);
+    for (auto &container : g_ContainerList) {
+      if (container.pHidden && *container.pHidden) continue;
+      if (!container.transform) continue;
+
+      Unity::Vector3 worldPos = Transform_get_position(container.transform);
+      Unity::Vector3 dir = { worldPos.x - camera_position.x, worldPos.y - camera_position.y, worldPos.z - camera_position.z };
+      if ((dir.x * camera_forward.x + dir.y * camera_forward.y + dir.z * camera_forward.z) <= 0.0f)
+          continue;
+
+      float distSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
+      if (distSq > maxDistSq)
+          continue;
+
+      Unity::Vector3 screenPos = Camera_WorldToScreenPoint(camera, worldPos, Unity::m_eCameraEye::m_eCameraEye_Center);
+      if (screenPos.z < 0.1f)
+        continue;
+
+      float dist = std::sqrtf(distSq);
+      sprintf_s(textBuf, "* [C] [%.1fm.] %s", dist, container.name.c_str());
+
+      float y = io.DisplaySize.y - screenPos.y;
+      draw->AddText(ImVec2(screenPos.x, y), IM_COL32(0, 255, 255, 255), textBuf); // Cyan for containers
+
+      if (g_ShowContainerContents) {
+          void* itemsList = *(void**)((uintptr_t)container.ptr + off_ContainerItems);
+          if (itemsList) {
+              void* itemsArray = *(void**)((uintptr_t)itemsList + off_ListItems);
+              int size = *(int*)((uintptr_t)itemsList + off_ListSize);
+              if (itemsArray && size > 0) {
+                  for (int i = 0; i < size && i < 5; ++i) {
+                      void* gearItemObj = ((void**)itemsArray)[4 + i]; // 4 is the offset for the first element in il2cppArray
+                      if (gearItemObj) {
+                          void* gearItem = *(void**)((uintptr_t)gearItemObj + off_GearItemObject_GearItem);
+                          if (gearItem) {
+                              std::string itemName = GetGearItemDisplayName(gearItem);
+                              sprintf_s(textBuf, "  - %s", itemName.c_str());
+                              y += 15.0f;
+                              draw->AddText(ImVec2(screenPos.x + 10.0f, y), IM_COL32(0, 255, 255, 255), textBuf);
+                          }
+                      }
+                  }
+                  if (size > 5) {
+                      y += 15.0f;
+                      draw->AddText(ImVec2(screenPos.x + 10.0f, y), IM_COL32(0, 255, 255, 255), "  ...");
+                  }
+              }
+          }
+      }
+    }
+  }
 }
 
 HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
@@ -553,7 +645,7 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
   if (GetAsyncKeyState(VK_INSERT) & 1) {
     showMenu = !showMenu;
   }
-  g_DrawEsp = g_ShowBaseAiESP || g_ShowGearItemESP || g_ShowHarvestableESP || g_ShowCarcassESP;
+  g_DrawEsp = g_ShowBaseAiESP || g_ShowGearItemESP || g_ShowHarvestableESP || g_ShowCarcassESP || g_ShowContainerESP;
 
   if (g_DrawEsp || showMenu) {
     ImGui_ImplDX11_NewFrame();
@@ -606,6 +698,20 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
       {
         std::lock_guard<std::mutex> lock(g_CarcassMutex);
         ImGui::Text("Found %zu Carcass", g_CarcassList.size());
+      }
+
+      ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(0, 255, 255, 255));
+      ImGui::Checkbox("Container ESP", &g_ShowContainerESP);
+      ImGui::PopStyleColor();
+      ImGui::SetItemTooltip("Show locations of storage containers.");
+      if (g_ShowContainerESP) {
+          ImGui::Indent();
+          ImGui::Checkbox("Show Contents", &g_ShowContainerContents);
+          ImGui::Unindent();
+      }
+      {
+          std::lock_guard<std::mutex> lock(g_ContainerMutex);
+          ImGui::Text("Found %zu Container", g_ContainerList.size());
       }
 
       ImGui::SliderFloat("ESP Distance", &g_EspDistance, 10.0f, 1000.0f, "%.0fm");
@@ -666,6 +772,7 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
       { std::lock_guard<std::mutex> l1(g_GearItemMutex); for(auto& i : g_GearItemList) counts[i.name]++; }
       { std::lock_guard<std::mutex> l2(g_BaseAiMutex); for(auto& a : g_BaseAiList) counts[a.name]++; }
       { std::lock_guard<std::mutex> l3(g_CarcassMutex); for(auto& c : g_CarcassList) counts[c.name]++; }
+      { std::lock_guard<std::mutex> l4(g_ContainerMutex); for(auto& c : g_ContainerList) counts[c.name]++; }
 
       std::vector<ItemCount> items;
       std::string filter(search); std::transform(filter.begin(), filter.end(), filter.begin(), ::tolower);
@@ -745,6 +852,25 @@ bool InitOffsets() {
   off_DisplayName =
       IL2CPP::Class::Utils::GetFieldOffset("BaseAi", "m_DisplayName");
   off_MeatAvailableKG = IL2CPP::Class::Utils::GetFieldOffset("BodyHarvest", "m_MeatAvailableKG");
+  off_ContainerItems = IL2CPP::Class::Utils::GetFieldOffset("Container", "m_Items");
+
+  auto gearItemObjectClass = IL2CPP::Class::Find("GearItemObject");
+  if (gearItemObjectClass) {
+      std::vector<Unity::il2cppFieldInfo*> fields;
+      IL2CPP::Class::FetchFields(gearItemObjectClass, &fields);
+      for (auto field : fields) {
+          if (strstr(field->m_pName, "m_GearItem")) {
+              off_GearItemObject_GearItem = field->m_iOffset;
+              break;
+          }
+      }
+  }
+
+  auto listClass = IL2CPP::Class::Find("System.Collections.Generic.List`1");
+  if (listClass) {
+      off_ListItems = IL2CPP::Class::Utils::GetFieldOffset(listClass, "_items");
+      off_ListSize = IL2CPP::Class::Utils::GetFieldOffset(listClass, "_size");
+  }
 
   // Skip Fade Offsets
   off_PanelMainMenu_StartFadedOut = IL2CPP::Class::Utils::GetFieldOffset("Panel_MainMenu", "m_StartFadedOut");
@@ -757,7 +883,8 @@ bool InitOffsets() {
   }
 
   return off_CurrentHP != -1 && off_MaxHP != -1 && off_DisplayName != -1 &&
-         off_MeatAvailableKG != -1;
+         off_MeatAvailableKG != -1 && off_ContainerItems != -1 &&
+         off_ListItems != -1 && off_ListSize != -1 && off_GearItemObject_GearItem != -1;
 }
 
 DWORD WINAPI MainThread(LPVOID lpReserved) {
@@ -855,6 +982,18 @@ DWORD WINAPI MainThread(LPVOID lpReserved) {
       IL2CPP::Class::Utils::GetMethodPointer("BodyHarvestManager", "Destroy", 1);
   if (MH_OK != MH_CreateHook(bodyHarvestManagerRemovePtr, &hkBodyHarvestManagerRemove,
                              reinterpret_cast<void **>(&oBodyHarvestManagerRemove)))
+    return 1;
+
+  auto containerOnEnablePtr =
+      IL2CPP::Class::Utils::GetMethodPointer("Container", "OnEnable", 0);
+  if (containerOnEnablePtr && MH_OK != MH_CreateHook(containerOnEnablePtr, &hkContainerOnEnable,
+                             reinterpret_cast<void **>(&oContainerOnEnable)))
+    return 1;
+
+  auto containerOnDisablePtr =
+      IL2CPP::Class::Utils::GetMethodPointer("Container", "OnDisable", 0);
+  if (containerOnDisablePtr && MH_OK != MH_CreateHook(containerOnDisablePtr, &hkContainerOnDisable,
+                             reinterpret_cast<void **>(&oContainerOnDisable)))
     return 1;
 
   // Skip Fade Hooks
