@@ -129,63 +129,7 @@ uintptr_t off_MaxHP;
 uintptr_t off_DisplayName;
 uintptr_t off_MeatAvailableKG;
 
-uintptr_t off_PanelMainMenu_StartFadedOut = 0;
-uintptr_t off_PanelMainMenu_InitialScreenFadeInDuration = 0;
-uintptr_t off_PanelSandbox_InitialScreenFadeInDuration = 0;
-Unity::il2cppClass* g_moviePlayerClass = nullptr;
 
-// Skip Fake Hook Typedefs
-typedef void (*tPanelMainMenu_Enable)(void*, bool);
-static tPanelMainMenu_Enable oPanelMainMenu_Enable = nullptr;
-
-typedef void (*tPanelMainMenu_UpdateFading)(void*);
-static tPanelMainMenu_UpdateFading oPanelMainMenu_UpdateFading = nullptr;
-
-typedef void (*tPanelMainMenu_SetPanelAlpha)(void*, float);
-static tPanelMainMenu_SetPanelAlpha oPanelMainMenu_SetPanelAlpha = nullptr;
-
-typedef void (*tPanelSandbox_UpdateFading)(void*);
-static tPanelSandbox_UpdateFading oPanelSandbox_UpdateFading = nullptr;
-
-typedef void (*tPanelSandbox_SetPanelAlpha)(void*, float);
-static tPanelSandbox_SetPanelAlpha oPanelSandbox_SetPanelAlpha = nullptr;
-
-void hkPanelSandbox_UpdateFading(void* __instance) {
-    if (__instance) {
-        if (off_PanelSandbox_InitialScreenFadeInDuration != -1)
-            *(float*)((uintptr_t)__instance + off_PanelSandbox_InitialScreenFadeInDuration) = 0.0f;
-    }
-    oPanelSandbox_UpdateFading(__instance);
-}
-
-void hkPanelSandbox_SetPanelAlpha(void* __instance, float alpha) {
-    oPanelSandbox_SetPanelAlpha(__instance, 1.0f);
-}
-
-void hkPanelMainMenu_Enable(void* __instance, bool enable) {
-    if (__instance) {
-        if (off_PanelMainMenu_StartFadedOut != -1)
-            *(bool*)((uintptr_t)__instance + off_PanelMainMenu_StartFadedOut) = true;
-        
-        if (g_moviePlayerClass) {
-            bool val = true;
-            IL2CPP::Class::Utils::SetStaticField(g_moviePlayerClass, "m_HasIntroPlayedForMainMenu", &val);
-        }
-    }
-    oPanelMainMenu_Enable(__instance, enable);
-}
-
-void hkPanelMainMenu_UpdateFading(void* __instance) {
-    if (__instance) {
-        if (off_PanelMainMenu_InitialScreenFadeInDuration != -1)
-            *(float*)((uintptr_t)__instance + off_PanelMainMenu_InitialScreenFadeInDuration) = 0.0f;
-    }
-    oPanelMainMenu_UpdateFading(__instance);
-}
-
-void hkPanelMainMenu_SetPanelAlpha(void* __instance, float alpha) {
-    oPanelMainMenu_SetPanelAlpha(__instance, 1.0f);
-}
 
 // Forward declarations
 extern LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg,
@@ -746,15 +690,6 @@ bool InitOffsets() {
       IL2CPP::Class::Utils::GetFieldOffset("BaseAi", "m_DisplayName");
   off_MeatAvailableKG = IL2CPP::Class::Utils::GetFieldOffset("BodyHarvest", "m_MeatAvailableKG");
 
-  // Skip Fade Offsets
-  off_PanelMainMenu_StartFadedOut = IL2CPP::Class::Utils::GetFieldOffset("Panel_MainMenu", "m_StartFadedOut");
-  off_PanelMainMenu_InitialScreenFadeInDuration = IL2CPP::Class::Utils::GetFieldOffset("Panel_MainMenu", "m_InitialScreenFadeInDuration");
-  off_PanelSandbox_InitialScreenFadeInDuration = IL2CPP::Class::Utils::GetFieldOffset("Panel_Sandbox", "m_InitialScreenFadeInDuration");
-
-  auto moviePlayerClass = IL2CPP::Class::Find("MoviePlayer");
-  if (moviePlayerClass) {
-      g_moviePlayerClass = moviePlayerClass;
-  }
 
   return off_CurrentHP != -1 && off_MaxHP != -1 && off_DisplayName != -1 &&
          off_MeatAvailableKG != -1;
@@ -857,21 +792,6 @@ DWORD WINAPI MainThread(LPVOID lpReserved) {
                              reinterpret_cast<void **>(&oBodyHarvestManagerRemove)))
     return 1;
 
-  // Skip Fade Hooks
-  auto panelMainMenuEnablePtr = IL2CPP::Class::Utils::GetMethodPointer("Panel_MainMenu", "Enable", 1);
-  if (panelMainMenuEnablePtr) MH_CreateHook(panelMainMenuEnablePtr, &hkPanelMainMenu_Enable, reinterpret_cast<void**>(&oPanelMainMenu_Enable));
-
-  auto panelMainMenuUpdateFadingPtr = IL2CPP::Class::Utils::GetMethodPointer("Panel_MainMenu", "UpdateFading", 0);
-  if (panelMainMenuUpdateFadingPtr) MH_CreateHook(panelMainMenuUpdateFadingPtr, &hkPanelMainMenu_UpdateFading, reinterpret_cast<void**>(&oPanelMainMenu_UpdateFading));
-
-  auto panelMainMenuSetPanelAlphaPtr = IL2CPP::Class::Utils::GetMethodPointer("Panel_MainMenu", "SetPanelAlpha", 1);
-  if (panelMainMenuSetPanelAlphaPtr) MH_CreateHook(panelMainMenuSetPanelAlphaPtr, &hkPanelMainMenu_SetPanelAlpha, reinterpret_cast<void**>(&oPanelMainMenu_SetPanelAlpha));
-
-  auto panelSandboxUpdateFadingPtr = IL2CPP::Class::Utils::GetMethodPointer("Panel_Sandbox", "UpdateFading", 0);
-  if (panelSandboxUpdateFadingPtr) MH_CreateHook(panelSandboxUpdateFadingPtr, &hkPanelSandbox_UpdateFading, reinterpret_cast<void**>(&oPanelSandbox_UpdateFading));
-
-  auto panelSandboxSetPanelAlphaPtr = IL2CPP::Class::Utils::GetMethodPointer("Panel_Sandbox", "SetPanelAlpha", 1);
-  if (panelSandboxSetPanelAlphaPtr) MH_CreateHook(panelSandboxSetPanelAlphaPtr, &hkPanelSandbox_SetPanelAlpha, reinterpret_cast<void**>(&oPanelSandbox_SetPanelAlpha));
 
   GameManager_GetMainCamera = reinterpret_cast<void *(*)()>(
       IL2CPP::Class::Utils::GetMethodPointer("GameManager", "GetMainCamera", 0));
