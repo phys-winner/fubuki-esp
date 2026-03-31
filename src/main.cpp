@@ -485,7 +485,7 @@ void DrawESP() {
       sprintf_s(textBuf, "* [%.1fm.]", dist);
 
       float y = io.DisplaySize.y - screenPos.y;
-      draw->AddText(ImVec2(screenPos.x, y), IM_COL32(255, 255, 100, 255), textBuf);
+      draw->AddText(ImVec2(screenPos.x, y), IM_COL32(144, 238, 144, 255), textBuf);
     }
   }
 
@@ -578,7 +578,7 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
       }
       {
         std::lock_guard<std::mutex> lock(g_BaseAiMutex);
-        ImGui::Text("Found %zu BaseAi", g_BaseAiList.size());
+        ImGui::TextColored(ImVec4(1.0f, 0.39f, 0.39f, 1.0f), "Found %zu BaseAi", g_BaseAiList.size());
       }
 
       ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 100, 255));
@@ -587,16 +587,16 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
       ImGui::SetItemTooltip("Show locations of tools, food, and other resources.");
       {
         std::lock_guard<std::mutex> lock(g_GearItemMutex);
-        ImGui::Text("Found %zu GearItem", g_GearItemList.size());
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.39f, 1.0f), "Found %zu GearItem", g_GearItemList.size());
       }
 
-      ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 100, 255));
+      ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(144, 238, 144, 255));
       ImGui::Checkbox("Harvestable ESP", &g_ShowHarvestableESP);
       ImGui::PopStyleColor();
       ImGui::SetItemTooltip("Highlight plants and harvestable objects in the environment.");
       {
         std::lock_guard<std::mutex> lock(g_HarvestableMutex);
-        ImGui::Text("Found %zu Harvestable", g_HarvestableList.size());
+        ImGui::TextColored(ImVec4(0.56f, 0.93f, 0.56f, 1.0f), "Found %zu Harvestable", g_HarvestableList.size());
       }
 
       ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 165, 0, 255));
@@ -605,7 +605,7 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
       ImGui::SetItemTooltip("Show locations of animal carcasses (harvestable bodies).");
       {
         std::lock_guard<std::mutex> lock(g_CarcassMutex);
-        ImGui::Text("Found %zu Carcass", g_CarcassList.size());
+        ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.0f, 1.0f), "Found %zu Carcass", g_CarcassList.size());
       }
 
       ImGui::SliderFloat("ESP Distance", &g_EspDistance, 10.0f, 1000.0f, "%.0fm");
@@ -647,6 +647,8 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
 
       static char search[64] = "";
       ImGui::Text("Filter:"); ImGui::SameLine();
+      if (ImGui::IsWindowAppearing())
+        ImGui::SetKeyboardFocusHere();
       ImGui::InputTextWithHint("##filter", "Search items...", search, IM_ARRAYSIZE(search));
       if (search[0] != '\0') {
         ImGui::SameLine();
