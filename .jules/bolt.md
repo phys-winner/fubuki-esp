@@ -13,3 +13,7 @@
 ## 2025-05-18 - [Hot-Path Math Consolidation]
 **Learning:** In performance-critical loops like `DrawESP`, every instruction counts. Calculating the relative direction vector (`worldPos - cameraPos`) and then immediately calling a distance function that performs the same subtraction is a waste of cycles.
 **Action:** Reuse the components of the relative direction vector `dir` calculated for plane-culling to manually compute the squared distance (`dir.x * dir.x + ...`). This eliminates 3 redundant subtractions per entity in the rendering path.
+
+## 2025-05-19 - [Static Entity & UI State Batching]
+**Learning:** For static entities (Gear, Harvestables, Carcasses), calling `Transform_get_position` every frame is a massive waste of IL2CPP overhead. Similarly, checking `InterfaceManager` UI states inside the `DrawESP` loop adds redundant cross-domain calls.
+**Action:** Cache the initial `Unity::Vector3` position in the `CachedESPItem` struct during the registration hook (`Add`) and use it in `DrawESP`. Batch UI state checks once per frame in `hkPresent` and pass them to `DrawESP` to minimize total IL2CPP calls per frame.

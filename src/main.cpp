@@ -110,9 +110,10 @@ static bool (*InterfaceManager_IsMainMenuEnabled)();
 
 struct CachedESPItem {
   void* ptr;
-  void* transform; // Cached transform pointer
+  void* transform;   // Cached transform pointer
+  Unity::Vector3 pos; // Cached world position
   std::string name;
-  bool* pHidden;   // Pointer to visibility state in g_ItemHidden for O(1) lookup
+  bool* pHidden;      // Pointer to visibility state in g_ItemHidden for O(1) lookup
 };
 
 std::vector<CachedESPItem> g_BaseAiList;
@@ -215,9 +216,10 @@ void hkBaseAiManagerAdd(void *__this) {
 
   std::string name = GetDisplayName(__this);
   void* transform = Component_get_transform(__this);
+  Unity::Vector3 pos = Transform_get_position(transform);
 
   std::lock_guard<std::mutex> lock(g_BaseAiMutex);
-  g_BaseAiList.push_back({__this, transform, name, &g_ItemHidden[name]});
+  g_BaseAiList.push_back({__this, transform, pos, name, &g_ItemHidden[name]});
 }
 
 using tBaseAiManagerRemove = void (*)(void *);
@@ -246,9 +248,10 @@ void hkGearManagerAdd(void *__this) {
 
   std::string name = GetGearItemDisplayName(__this);
   void* transform = Component_get_transform(__this);
+  Unity::Vector3 pos = Transform_get_position(transform);
 
   std::lock_guard<std::mutex> lock(g_GearItemMutex);
-  g_GearItemList.push_back({__this, transform, name, &g_ItemHidden[name]});
+  g_GearItemList.push_back({__this, transform, pos, name, &g_ItemHidden[name]});
 }
 
 using tGearManagerRemove = void (*)(void *);
@@ -276,9 +279,10 @@ void hkHarvestableManagerAdd(void *__this) {
   oHarvestableManagerAdd(__this);
 
   void* transform = Component_get_transform(__this);
+  Unity::Vector3 pos = Transform_get_position(transform);
 
   std::lock_guard<std::mutex> lock(g_HarvestableMutex);
-  g_HarvestableList.push_back({__this, transform, "", nullptr}); // Name not used for harvestables yet
+  g_HarvestableList.push_back({__this, transform, pos, "", nullptr}); // Name not used for harvestables yet
 }
 
 using tHarvestableManagerRemove = void (*)(void *);
@@ -307,9 +311,10 @@ void hkBodyHarvestManagerAdd(void *__this) {
 
   std::string name = GetCarcassDisplayName(__this);
   void* transform = Component_get_transform(__this);
+  Unity::Vector3 pos = Transform_get_position(transform);
 
   std::lock_guard<std::mutex> lock(g_CarcassMutex);
-  g_CarcassList.push_back({__this, transform, name, &g_ItemHidden[name]});
+  g_CarcassList.push_back({__this, transform, pos, name, &g_ItemHidden[name]});
 }
 
 using tBodyHarvestManagerRemove = void (*)(void *);
@@ -358,14 +363,8 @@ std::string GetCarcassDisplayName(void *carcass) {
   return ustr ? ustr->ToString() : "Carcass";
 }
 
-void DrawESP() {
-  if (!g_DrawEsp)
-    return;
-
-  if (InterfaceManager_IsOverlayActiveImmediate && InterfaceManager_IsOverlayActiveImmediate())
-    return;
-
-  if (InterfaceManager_IsMainMenuEnabled && InterfaceManager_IsMainMenuEnabled())
+void DrawESP(bool overlayActive, bool mainMenuEnabled) {
+  if (!g_DrawEsp || overlayActive || mainMenuEnabled)
     return;
 
   auto camera = GameManager_GetMainCamera();
@@ -432,10 +431,9 @@ void DrawESP() {
     std::lock_guard<std::mutex> lock(g_GearItemMutex);
     for (auto &item : g_GearItemList) {
       if (item.pHidden && *item.pHidden) continue;
-      if (!item.transform) continue;
 
-      // Update position every frame
-      Unity::Vector3 worldPos = Transform_get_position(item.transform);
+      // Use cached position for static items
+      Unity::Vector3 worldPos = item.pos;
 
       // Fast plane culling and squared distance calculation
       Unity::Vector3 dir = { worldPos.x - camera_position.x, worldPos.y - camera_position.y, worldPos.z - camera_position.z };
@@ -462,10 +460,8 @@ void DrawESP() {
   if (g_ShowHarvestableESP) {
     std::lock_guard<std::mutex> lock(g_HarvestableMutex);
     for (auto &harvestable : g_HarvestableList) {
-      if (!harvestable.transform) continue;
-
-      // Update position every frame
-      Unity::Vector3 worldPos = Transform_get_position(harvestable.transform);
+      // Use cached position for static items
+      Unity::Vector3 worldPos = harvestable.pos;
 
       // Fast plane culling and squared distance calculation
       Unity::Vector3 dir = { worldPos.x - camera_position.x, worldPos.y - camera_position.y, worldPos.z - camera_position.z };
@@ -493,9 +489,9 @@ void DrawESP() {
     std::lock_guard<std::mutex> lock(g_CarcassMutex);
     for (auto &carcass : g_CarcassList) {
       if (carcass.pHidden && *carcass.pHidden) continue;
-      if (!carcass.transform) continue;
 
-      Unity::Vector3 worldPos = Transform_get_position(carcass.transform);
+      // Use cached position for static items
+      Unity::Vector3 worldPos = carcass.pos;
 
       // Fast plane culling and squared distance calculation
       Unity::Vector3 dir = { worldPos.x - camera_position.x, worldPos.y - camera_position.y, worldPos.z - camera_position.z };
@@ -560,7 +556,10 @@ HRESULT WINAPI hkPresent(IDXGISwapChain *pSwapChain, UINT SyncInterval,
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
 
-    DrawESP();
+    bool overlayActive = InterfaceManager_IsOverlayActiveImmediate && InterfaceManager_IsOverlayActiveImmediate();
+    bool mainMenuEnabled = InterfaceManager_IsMainMenuEnabled && InterfaceManager_IsMainMenuEnabled();
+
+    DrawESP(overlayActive, mainMenuEnabled);
     if (showMenu) {
       ImGui::Begin("Fubuki-ESP | The Long Dark", &showMenu, ImGuiWindowFlags_AlwaysAutoResize);
       ImGui::TextDisabled("Controls: [INS] Menu | [END] Unload");
